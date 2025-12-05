@@ -1,0 +1,7 @@
+results/**/*.csv
+Datasets/*
+src/**/__pycache__
+src/*.egg-info
+.vscode/
+.env
+.DS_Store
