@@ -113,10 +113,10 @@ def main():
         batch_size=1024,
         device='cuda',
         metrics='restr',
-        strategy='overlapping'
+        strategy='MSE'
     )
     results = []
-    for filename in tqdm(file_list[::10]):
+    for filename in tqdm(file_list):
         model = iTransformer.Model(config)
         metrics = train_and_evaluate(
             path,
@@ -132,7 +132,7 @@ def main():
         results.append(result)
         
         results_df = pd.DataFrame(results)
-        results_df.to_csv('iTransformer_TSB-AD-U_results_mean_short.csv', index=False)
+        results_df.to_csv('results/iTransformer/MSE.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':

@@ -64,7 +64,7 @@ def main():
         batch_size=1024,
         device='cuda',
         metrics='restr',
-        strategy='MSE'
+        strategy='disjoint'
     )
     results = []
     for filename in tqdm(file_list):
@@ -83,7 +83,7 @@ def main():
         results.append(result)
         
         results_df = pd.DataFrame(results)
-        results_df.to_csv(f'results/TimesNet/MSE.csv', index=False)
+        results_df.to_csv(f'results/TimesNet/disjoint.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 

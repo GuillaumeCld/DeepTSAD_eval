@@ -25,7 +25,7 @@ class Evaluator:
         
         self.strategy = strategy
         if strategy == "overlapping":
-            self.inference_strategy = inference.combined_pointwise_profile
+            self.inference_strategy = inference.combined_pointwise_profile_median
         elif strategy == "disjoint":
             self.inference_strategy = inference.disjoint_pointwise_profile
         elif strategy == "MSE":

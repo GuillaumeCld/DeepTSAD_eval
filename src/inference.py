@@ -51,6 +51,36 @@ def combined_pointwise_profile(pw_error: np.ndarray, n: int, window: int) -> np.
 
     return acc / np.maximum(cnt, 1)
 
+def combined_pointwise_profile_median(pw_error: np.ndarray, n: int, window: int) -> np.ndarray:
+    """
+    Compute the pointwise median across overlapping windows.
+
+    pw_error: shape (num_windows, window) where num_windows == n - window + 1
+    Returns array of length n with the median of all contributions that cover each position.
+    """
+    pw_error = np.asarray(pw_error)
+    if pw_error.ndim != 2:
+        raise ValueError("pw_error must be 2D (num_windows, window)")
+
+    num_windows = pw_error.shape[0]
+    out = np.empty(n, dtype=pw_error.dtype)
+
+    for i in range(n):
+        # windows j that cover position i satisfy: j + k = i  with k in [0, window-1]
+        j0 = max(0, i - (window - 1))
+        j1 = min(i, num_windows - 1)
+        if j1 < j0:
+            # no contribution (can happen if window > n); set NaN for float, else 0
+            if np.issubdtype(pw_error.dtype, np.floating):
+                out[i] = np.nan
+            else:
+                out[i] = 0
+            continue
+        j = np.arange(j0, j1 + 1)
+        vals = pw_error[j, i - j]
+        out[i] = np.median(vals)
+    return out
+
 def make_sequences_1d(data: np.ndarray, window: int) -> np.ndarray:
     """
     Build overlapping windows explicitly (shape: (n - w + 1, w)) without using sliding_window_view.

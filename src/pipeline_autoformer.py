@@ -126,7 +126,7 @@ def main():
         results.append(result)
         
         results_df = pd.DataFrame(results)
-        results_df.to_csv('Autoformer_TSB-AD-U_results_mean_short.csv', index=False)
+        results_df.to_csv('results/Autoformer/mean.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':
