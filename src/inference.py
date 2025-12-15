@@ -1,5 +1,6 @@
 import numpy as np
-
+import torch
+import torch.nn.functional as F
 # -----------------------------
 # Numpy helpers (vectorized)
 # -----------------------------
@@ -98,3 +99,5 @@ def make_sequences_1d(data: np.ndarray, window: int) -> np.ndarray:
     for j in range(window):
         out[:, j] = data[j : j + num_windows]
     return out
+
+

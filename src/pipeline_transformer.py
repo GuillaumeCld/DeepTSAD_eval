@@ -115,25 +115,31 @@ def main():
         metrics='restr',
         strategy='MSE'
     )
-    results = []
-    for filename in tqdm(file_list):
-        model = Transformer.Model(config)
-        metrics = train_and_evaluate(
-            path,
-            filename,
-            model,
-            trainer,
-            evaluator,
-            win_size=win_size,
-            epochs=20
-        )
-        result = {'filename': filename}
-        result.update(metrics)
-        results.append(result)
-        
-        results_df = pd.DataFrame(results)
-        results_df.to_csv('results/Transformer/MSE.csv', index=False)
+    for seed in range(0, 5, 1):
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        results = []
+        for filename in tqdm(file_list):
+            model = Transformer.Model(config)
+            metrics = train_and_evaluate(
+                path,
+                filename,
+                model,
+                trainer,
+                evaluator,
+                win_size=win_size,
+                epochs=20
+            )
+            result = {'filename': filename}
+            result.update(metrics)
+            results.append(result)
+            
+            results_df = pd.DataFrame(results)
+            results_df.to_csv('results/Transformer/MSE.csv', index=False)
 
-    print(results_df.mean(numeric_only=True).round(3)*100)
+        print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':
     main()

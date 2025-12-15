@@ -107,10 +107,10 @@ def main():
         batch_size=1024,
         device='cuda',
         metrics='restr',
-        strategy='overlapping'
+        strategy='disjoint'
     )
     results = []
-    for filename in tqdm(file_list[::10]):
+    for filename in tqdm(file_list):
         model = Autoformer.Model(config)
         metrics = train_and_evaluate(
             path,
@@ -126,7 +126,7 @@ def main():
         results.append(result)
         
         results_df = pd.DataFrame(results)
-        results_df.to_csv('results/Autoformer/mean.csv', index=False)
+        results_df.to_csv('results/Autoformer/disjoint.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':

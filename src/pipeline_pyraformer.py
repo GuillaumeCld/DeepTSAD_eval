@@ -116,7 +116,7 @@ def main():
         strategy='disjoint'
     )
     results = []
-    for filename in tqdm(file_list[::10]):
+    for filename in tqdm(file_list):
         model = Pyraformer.Model(config)
         metrics = train_and_evaluate(
             path,
@@ -132,7 +132,7 @@ def main():
         results.append(result)
         
         results_df = pd.DataFrame(results)
-        results_df.to_csv('Pyraformer_TSB-AD-U_results_disjoint_short.csv', index=False)
+        results_df.to_csv('results/Pyraformer/disjoint.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':

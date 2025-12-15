@@ -28,11 +28,11 @@ def main():
     np.random.seed(seed)
     random.seed(seed)
 
-    path = 'Datasets/TSB-AD-U/'
-    file_list = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
+    path = 'Datasets/TSB-AD-M/'
+    file_list = 'Datasets/File_List/TSB-AD-M.csv'
     file_list = pd.read_csv(file_list)['file_name'].values
 
-    win_size = 64
+    win_size = 32
 
     config = SimpleNamespace(
         task_name='anomaly_detection',
@@ -68,6 +68,12 @@ def main():
     )
     results = []
     for filename in tqdm(file_list):
+
+        df = pd.read_csv(os.path.join(path, filename))
+        enc_in = df.shape[1] - 1  # exclude label column
+        config.enc_in = enc_in
+        config.c_out = enc_in
+
         model = TimesNet.Model(config)
         metrics = train_and_evaluate(
             path,
@@ -83,7 +89,7 @@ def main():
         results.append(result)
         
         results_df = pd.DataFrame(results)
-        results_df.to_csv(f'results/TimesNet/mean_64.csv', index=False)
+        results_df.to_csv(f'results/TimesNet/M_mean.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 

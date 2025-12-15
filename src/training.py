@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from tools import ReconstructDataset
+from tools import ReconstructDataset, my_kl_loss
 
 
 class Trainer:
@@ -117,6 +117,7 @@ class Trainer:
 
 
     def train_adam_bfgs(self, model, data, epochs_adam, epochs_bfgs):
+
         
         model = model.to(self.device)
         model.train()
@@ -152,3 +153,53 @@ class Trainer:
                     return loss
 
                 optimizer_bfgs.step(closure)
+
+
+
+
+    def train_anomaly_transformer(self, model, data, epochs):
+        
+        model = model.to(self.device)
+        model.train()
+        self.k = 3 # same value as in the paper
+
+        optimizer = self.optimizer_fn(model.parameters(), lr=self.lr)
+
+        data_train, data_val = self._split(data)
+
+        train_loader = self._loader(data_train, win_size=self.win_size, shuffle=True)
+
+        for _ in range(epochs):
+            for batch in train_loader:
+                inputs = batch.to(self.device)
+
+                optimizer.zero_grad()
+                enc_out, series, prior, _ = model(inputs)
+                recon_loss = self.criterion(enc_out, inputs)
+
+                series_loss = 0.0
+                prior_loss = 0.0
+                for u in range(len(prior)):
+                    series_loss += (torch.mean(my_kl_loss(series[u], (
+                            prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                   self.win_size)).detach())) + torch.mean(
+                        my_kl_loss((prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                           self.win_size)).detach(),
+                                   series[u])))
+                    prior_loss += (torch.mean(my_kl_loss(
+                        (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                self.win_size)),
+                        series[u].detach())) + torch.mean(
+                        my_kl_loss(series[u].detach(), (
+                                prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
+                                                                                                       self.win_size)))))
+                series_loss = series_loss / len(prior)
+                prior_loss = prior_loss / len(prior)
+
+
+                loss1 = recon_loss - self.k * series_loss
+                loss2 = recon_loss + self.k * prior_loss
+
+                loss1.backward(retain_graph=True)
+                loss2.backward()
+                optimizer.step()
