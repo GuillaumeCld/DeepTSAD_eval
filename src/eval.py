@@ -26,7 +26,7 @@ class Evaluator:
 
         self.strategy = strategy
         if strategy == "overlapping":
-            self.inference_strategy = inference.combined_pointwise_profile_median
+            self.inference_strategy = inference.combined_pointwise_profile
         elif strategy == "disjoint":
             self.inference_strategy = inference.disjoint_pointwise_profile
         elif strategy == "MSE":
@@ -60,17 +60,21 @@ class Evaluator:
 
         if self.strategy == "overlapping":
             reconstruction_error = self._overlapping_reconstruction(
-                data, model, win_size, stride).cpu().numpy()
+                data, model, win_size, stride)
         elif self.strategy == "disjoint":
             reconstruction_error = self._disjoint_reconstruction(
-                data, model, win_size).cpu().numpy()
+                data, model, win_size)
         elif self.strategy == "MSE":
             reconstruction_error = self._mse_reconstruction(
-                data, model, win_size).cpu().numpy()
+                data, model, win_size)
         else:
             raise ValueError(
                 f"Unknown inference strategy: {self.strategy}")
 
+
+        return reconstruction_error.cpu().numpy()
+
+        # n = data.shape[0]
         # ds = utils.ReconstructDataset(
         #     data, window_size=win_size, stride=1, normalize=False
         # )
@@ -120,10 +124,10 @@ class Evaluator:
         #     reconstruction_error = np.array([reconstruction_error[0]]*math.ceil((win_size-1)/2) +
         #                                     list(reconstruction_error) + [reconstruction_error[-1]]*((win_size-1)//2))
 
-        return reconstruction_error
+        # return reconstruction_error
 
     @torch.no_grad()
-    def _count_closed_form(n: int, w: int, s: int, device=None) -> torch.Tensor:
+    def _count_closed_form(self, n: int, w: int, s: int, device=None) -> torch.Tensor:
         i = torch.arange(n, device=device)
         lo = (i - w + 1).clamp_min(0)
         hi = i.clamp_max(n - w)
@@ -138,7 +142,7 @@ class Evaluator:
         return sum_err, count
 
     @torch.no_grad()
-    def update_sum_with_batch_fold(sum_err: torch.Tensor, error_batch: torch.Tensor, start: int, n: int, win_size: int, stride: int):
+    def update_sum_with_batch_fold(self, sum_err: torch.Tensor, error_batch: torch.Tensor, start: int, n: int, win_size: int, stride: int):
         """
         sum_err: (n,)
         E_batch: (B, w) pointwise errors for windows k=start..start+b-1 (contiguous!)
@@ -162,9 +166,10 @@ class Evaluator:
         return sum_err
 
     @torch.no_grad()
-    def finalize_avg(sum_err: torch.Tensor, count: torch.Tensor):
+    def finalize_avg(self, sum_err: torch.Tensor, count: torch.Tensor):
         return sum_err / count.clamp_min(1)
 
+    @torch.no_grad()
     def _overlapping_reconstruction(self, data, model, win_size, stride):
         n = data.shape[0]
         sum_err = torch.zeros(n, device=self.device, dtype=torch.float32)
@@ -181,15 +186,15 @@ class Evaluator:
                 xb = xb.to(self.device).float()
                 out = model(xb)
 
-                error = mse_fn(out, xb)  # (B,W)
+                error = mse_fn(out, xb).sum(dim=-1)  # (B,W)
                 sum_err = self.update_sum_with_batch_fold(
                     sum_err, error, start, n, win_size, stride)
                 start += xb.shape[0] * stride
-
         rec_err = self.finalize_avg(
-            sum_err, self._count_closed_form(n, win_size, stride, device=self.device))
+            sum_err, self._count_closed_form(n, win_size, stride, self.device))
         return rec_err
-
+    
+    @torch.no_grad()
     def _disjoint_reconstruction(self, data, model, win_size):
         n = data.shape[0]
         rec_err = torch.zeros(n, device=self.device, dtype=torch.float32)
@@ -197,7 +202,8 @@ class Evaluator:
         start = 0
 
         ds = utils.ReconstructDataset(
-        data, window_size=win_size, stride=win_size, normalize=False)
+        data, window_size=win_size, stride=win_size, normalize=False, add_last_partial=True)
+        # since stride > 1, the last window is partial and is stored as data[-window_size:]
         dl = torch.utils.data.DataLoader(
             ds, batch_size=self.batch_size, shuffle=False, drop_last=False, )
 
@@ -208,16 +214,31 @@ class Evaluator:
 
                 error = mse_fn(out, xb)  # (B,W)
                 end = start + xb.shape[0] * win_size
-                rec_err[start:end] = error.flatten()
-                start = end
+
+                if end > n:
+                    end = n
+                    full_windows = (xb.shape[0]-1) * win_size 
+                    remainder = n % win_size
+                    if remainder == 0:
+                        remainder = win_size
+                    rec_err[start:start+full_windows] = error.flatten()[:full_windows]
+                    rec_err[-remainder:] = error[-1, -remainder:].flatten()
+                    break
+                else:
+                    rec_err[start:end] = error.flatten()
+                    start = end
+
 
         return rec_err
-
+    
+    @torch.no_grad()
     def _mse_reconstruction(self, data, model, win_size):
         n = data.shape[0]
+        pad_left = math.ceil((win_size - 1) / 2)
+        pad_right = (win_size - 1) // 2
         rec_err = torch.zeros(n, device=self.device, dtype=torch.float32)
-        mse_fn = torch.nn.MSELoss(reduction="mean")
-        start = 0
+        mse_fn = torch.nn.MSELoss(reduction="none")
+        start = pad_left
 
         ds = utils.ReconstructDataset(
         data, window_size=win_size, stride=1, normalize=False)
@@ -228,37 +249,39 @@ class Evaluator:
                 xb = xb.to(self.device).float()
                 out = model(xb)
 
-                error = mse_fn(out, xb)  # (B,W)
+                error = mse_fn(out, xb).mean(dim=1)  # (B,W)
+
                 end = start + xb.shape[0]
-                rec_err[start:end] = error
+                rec_err[start:end] = error.flatten()
                 start = end
 
-        if rec_err.shape[0] < len(data):
-            rec_err = np.array([rec_err[0]]*math.ceil((win_size-1)/2) +
-                               list(rec_err) + [rec_err[-1]]*((win_size-1)//2))
+     
+        
+        rec_err[:pad_left] = rec_err[pad_left]
+        rec_err[n - pad_right:] = rec_err[n - pad_right - 1]
 
         return rec_err
 
 
-def reconstruct(self, data, model, win_size):
-    model = model.to(self.device)
-    model.eval()
-    data = data.astype(np.float32)
-    n = data.shape[0]
-    ds = utils.ReconstructDataset(
-        data, window_size=win_size, stride=1, normalize=False)
-    dl = torch.utils.data.DataLoader(
-        ds, batch_size=self.batch_size, shuffle=False, drop_last=False, )
-    outs = []
-    with torch.inference_mode():
-        for xb in dl:
-            xb = xb.to(self.device).float()
-            out = model(xb)
+    def reconstruct(self, data, model, win_size):
+        model = model.to(self.device)
+        model.eval()
+        data = data.astype(np.float32)
+        n = data.shape[0]
+        ds = utils.ReconstructDataset(
+            data, window_size=win_size, stride=1, normalize=False)
+        dl = torch.utils.data.DataLoader(
+            ds, batch_size=self.batch_size, shuffle=False, drop_last=False, )
+        outs = []
+        with torch.inference_mode():
+            for xb in dl:
+                xb = xb.to(self.device).float()
+                out = model(xb)
 
-            outs.append(out.cpu())
+                outs.append(out.cpu())
 
-    output = torch.cat(outs, dim=0).numpy()[:, :, 0]
-    return output
+        output = torch.cat(outs, dim=0).numpy()[:, :, 0]
+        return output
 
     def reconstruction_error_anomaly_transformer(self, data, model, win_size):
 

@@ -17,11 +17,6 @@ def main():
     # fix seed for reproducibility
 
     seed = 3
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
 
     path = 'Datasets/TSB-AD-U/'
     file_list = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
@@ -44,38 +39,36 @@ def main():
         validation_size=0.2
     )
     
-    strategies = ["MSE", "overlapping", "disjoint"]
     evaluator = Evaluator(
         batch_size=1024,
         device='cuda',
         metrics='restr',
         strategy='overlapping'
     )
-    for seed in range(5):
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        np.random.seed(seed)
-        random.seed(seed)
-        results = {"disjoint": [], "overlapping": [], "MSE": []}
-        for filename in tqdm(file_list):
-            model = Linear.Model(config)
-            metrics = train_and_evaluate(
-                path,
-                filename,
-                model,
-                trainer,
-                evaluator,
-                win_size=win_size,
-                epochs=20
-            )
-            result = {'filename': filename}
-            result.update(metrics)
-            results.append(result)
-            
-            results_df = pd.DataFrame(results)
-            results_df.to_csv(f'results/Linear/32_{seed}.csv', index=False)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    results = []
+    for filename in tqdm(file_list):
+        model = Linear.Model(config)
+        metrics = train_and_evaluate(
+            path,
+            filename,
+            model,
+            trainer,
+            evaluator,
+            win_size=win_size,
+            epochs=20
+        )
+        result = {'filename': filename}
+        result.update(metrics)
+        results.append(result)
+        
+        results_df = pd.DataFrame(results)
+        results_df.to_csv(f'results/Linear/32_{seed}.csv', index=False)
 
-        print(results_df.mean(numeric_only=True).round(3)*100)
+    print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':
     main()
