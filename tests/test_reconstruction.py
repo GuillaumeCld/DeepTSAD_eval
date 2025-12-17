@@ -40,9 +40,11 @@ def overlapping_error(all_error, n, win_size, stride):
     rec_err = torch.zeros(n)
     count = torch.zeros(n)
 
-    for i in range(all_error.shape[0]):
-        start = i * stride
+    for i in range(0, all_error.shape[0], stride):
+        start = i
         end = start + win_size
+        if end > n:
+            end = n
         rec_err[start:end] += all_error[i].squeeze()
         count[start:end] += 1
 
@@ -70,7 +72,7 @@ def test_reconstruction():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     evaluator = Evaluator(batch_size=20, device=device)
     data = torch.randn(1000, dtype=torch.float32).reshape(-1,1).to(device)
-    win_size = 5
+    win_size = 32
 
 
     config = SimpleNamespace(
@@ -100,6 +102,26 @@ def test_reconstruction():
     print(f"MSE average: {torch.mean(err_mse).item()}, My MSE: {torch.mean(my_err_mse).item()}")
     assert torch.allclose(err_mse, my_err_mse), "MSE errors do not match!"
 
+
+
+    my_err_overlapping_2 = overlapping_error(errors, len(data), win_size, stride=2)
+    err_overlap_2 = evaluator._overlapping_reconstruction(data, model, win_size, stride=2).cpu()
+
+    print(f"Overlapping (stride=2) average: {torch.mean(err_overlap_2).item()}, My Overlapping (stride=2) MSE: {torch.mean(my_err_overlapping_2).item()}")
+    assert torch.allclose(err_overlap_2, my_err_overlapping_2), "Overlapping (stride=2) errors do not match!"
+
+    my_err_overlapping_4 = overlapping_error(errors, len(data), win_size, stride=4)
+    err_overlap_4 = evaluator._overlapping_reconstruction(data, model, win_size, stride=4).cpu()
+
+    print(f"Overlapping (stride=4) average: {torch.mean(err_overlap_4).item()}, My Overlapping (stride=4) MSE: {torch.mean(my_err_overlapping_4).item()}")
+    assert torch.allclose(err_overlap_4, my_err_overlapping_4), "Overlapping (stride=4) errors do not match!"
+
+    my_err_overlapping_8 = overlapping_error(errors, len(data), win_size, stride=8)
+    err_overlap_8 = evaluator._overlapping_reconstruction(data, model, win_size, stride=8).cpu()
+
+    print(f"Overlapping (stride=8) average: {torch.mean(err_overlap_8).item()}, My Overlapping (stride=8) MSE: {torch.mean(my_err_overlapping_8).item()}")
+    assert torch.allclose(err_overlap_8, my_err_overlapping_8), "Overlapping (stride=8) errors do not match!"
+    
 # ------------------
 # Run
 # ------------------

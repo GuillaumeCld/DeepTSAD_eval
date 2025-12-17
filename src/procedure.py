@@ -7,7 +7,8 @@ def train_and_evaluate(path,
                        trainer,
                        evaluator,
                        win_size=None,
-                       epochs=20):
+                       epochs=20,
+                       stride=1):
     """
     Read dataset from filename, train model and evaluate.
     trainer and evaluator should be instantiated by the caller.
@@ -21,7 +22,7 @@ def train_and_evaluate(path,
 
     trainer.train(model, data_train, epochs)
 
-    return evaluator.evaluate(data, labels, model, win_size)
+    return evaluator.evaluate(data, labels, model, win_size, stride=stride)
 
 
 def compare_reconstruction(path,

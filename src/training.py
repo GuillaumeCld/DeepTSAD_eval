@@ -26,6 +26,7 @@ class Trainer:
         # losses / optimizer factory
         self.criterion = nn.MSELoss()
         self.optimizer_fn = optim.Adam
+        self.mask_value = 0.0
 
     def _split(self, data):
         cut = int((1.0 - self.validation_size) * len(data))
@@ -58,63 +59,109 @@ class Trainer:
 
 
 
+    # -------------------------
+    # Mask builder
+    # -------------------------
+    def _mask_random_points(self, x, mask_ratio: float):
+        """
+        x: (B, T, ...)   time dimension is 1
+        Returns:
+          x_masked: same shape as x
+          mask: (B, T) boolean, True where masked
+        """
+        B, T = x.shape[0], x.shape[1]
+        mask = (torch.rand(B, T, device=x.device) < mask_ratio)  # True = masked
 
-    def train_masked_end(self, model, data, epochs, mask_ratio=0.1):
-        
+        x_masked = x.clone()
+        # broadcast mask to all remaining dims
+        view = (B, T) + (1,) * (x.dim() - 2)
+        x_masked[mask.view(view).expand_as(x_masked)] = self.mask_value
+        return x_masked, mask
+
+    def _mask_random_segment(self, x, mask_ratio: float):
+        """
+        Masks ONE contiguous segment per sample.
+        """
+        B, T = x.shape[0], x.shape[1]
+        seg_len = max(1, int(round(T * mask_ratio)))
+
+        mask = torch.zeros(B, T, dtype=torch.bool, device=x.device)
+        for b in range(B):
+            start = torch.randint(0, T - seg_len + 1, (1,), device=x.device).item()
+            mask[b, start:start + seg_len] = True
+
+        x_masked = x.clone()
+        view = (B, T) + (1,) * (x.dim() - 2)
+        x_masked[mask.view(view).expand_as(x_masked)] = self.mask_value
+        return x_masked, mask
+
+    def _mask_middle_segment(self, x, mask_ratio: float):
+        """
+        Masks ONE contiguous segment centered in the window for each sample.
+        """
+        B, T = x.shape[0], x.shape[1]
+        seg_len = max(1, int(round(T * mask_ratio)))
+
+        start = (T - seg_len) // 2
+        end = start + seg_len
+
+        mask = torch.zeros(B, T, dtype=torch.bool, device=x.device)
+        mask[:, start:end] = True
+
+        x_masked = x.clone()
+        view = (B, T) + (1,) * (x.dim() - 2)
+        x_masked[mask.view(view).expand_as(x_masked)] = self.mask_value
+        return x_masked, mask
+
+    def _masked_recon_loss(self, preds, target, mask_bt):
+        """
+        preds, target: (B, T, ...)
+        mask_bt: (B, T) boolean True where we want loss
+        """
+        # criterion should return per-element loss (reduction="none")
+        per_elem = self.criterion(preds, target)  # (B, T, ...)
+        view = mask_bt.shape + (1,) * (per_elem.dim() - 2)
+        mask = mask_bt.view(view).to(per_elem.dtype)
+
+        masked_loss = per_elem * mask
+        denom = mask.sum().clamp_min(1.0)  # avoid div by 0
+        return masked_loss.sum() / denom
+
+
+    def train_masked(self, model, data, epochs, mode: str):
         model = model.to(self.device)
         model.train()
 
         optimizer = self.optimizer_fn(model.parameters(), lr=self.lr)
 
         data_train, data_val = self._split(data)
-
         train_loader = self._loader(data_train, win_size=self.win_size, shuffle=True)
 
-        mask_len = int(self.win_size * mask_ratio)
+        if mode == "points":
+            masker = self._mask_random_points
+        elif mode == "segment":
+            masker = self._mask_random_segment
+        elif mode == "middle":
+            masker = self._mask_middle_segment
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
 
         for _ in range(epochs):
             for batch in train_loader:
-                inputs = batch.to(self.device)
+                inputs = batch.to(self.device)  # (B, T, ...)
 
-                # Create masked inputs
-                masked_inputs = inputs.clone()
-                masked_inputs[:, -mask_len:, :] = 0.0  # Mask the end part
-
-                optimizer.zero_grad()
-                outputs = model(masked_inputs)
-                loss = self.criterion(outputs[:, -mask_len:, :], inputs[:, -mask_len:, :])
-                loss.backward()
-                optimizer.step()
-
-
-    def train_masked_random(self, model, data, epochs, mask_ratio=0.66):
-        
-        model = model.to(self.device)
-        model.train()
-
-        optimizer = self.optimizer_fn(model.parameters(), lr=self.lr)
-
-        data_train, data_val = self._split(data)
-
-        train_loader = self._loader(data_train, win_size=self.win_size, shuffle=True)
-
-        mask_len = int(self.win_size * mask_ratio)
-
-        for _ in range(epochs):
-            for batch in train_loader:
-                inputs = batch.to(self.device)
-
-                # Create masked inputs
-                masked_inputs = inputs.clone()
-                start_idx = np.random.randint(0, self.win_size - mask_len + 1)
-                masked_inputs[:, start_idx:start_idx + mask_len, :] = 0.0  # Mask a random part
+                # masking
+                masked_inputs, mask = masker(inputs, mask_ratio=0.3)  
 
                 optimizer.zero_grad()
                 outputs = model(masked_inputs)
-                loss = self.criterion(outputs[:, start_idx:start_idx + mask_len, :], inputs[:, start_idx:start_idx + mask_len, :])
+
+                # loss only on masked parts
+                masked_outputs = outputs[mask]
+                loss = self.criterion(masked_inputs[mask], masked_outputs)
+
                 loss.backward()
                 optimizer.step()
-
 
     def train_adam_bfgs(self, model, data, epochs_adam, epochs_bfgs):
 
