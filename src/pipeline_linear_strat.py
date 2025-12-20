@@ -64,53 +64,53 @@ def main():
     #     down_sampling_method="avg"
     # )
     # timesnet
-    # config = SimpleNamespace(
-    #     task_name='anomaly_detection',
-    #     seq_len=win_size,
-    #     label_len=win_size,  # unused
-    #     pred_len=0,   # no forecasting for reconstruction
-    #     top_k=3,
-    #     d_model=8,
-    #     d_ff=16,
-    #     num_kernels=6, # number of kernels in InceptionBlock
-    #     e_layers=1,    # number of TimesNet blocks
-    #     embed='timeF',
-    #     freq='t',
-    #     dropout=0.1,   # dropout rate
-    #     enc_in=1,      # univariate input
-    #     c_out=1,       # univariate output
-    # )
-
-    # itransformer
     config = SimpleNamespace(
         task_name='anomaly_detection',
         seq_len=win_size,
         label_len=win_size,  # unused
         pred_len=0,   # no forecasting for reconstruction
+        top_k=3,
         d_model=8,
         d_ff=16,
-        factor=3,
+        num_kernels=6, # number of kernels in InceptionBlock
         e_layers=1,    # number of TimesNet blocks
-        d_layers=1,
-        enc_in=1,      # univariate input
-        dec_in=1,      # univariate input
-        c_out=1,       # univariate output
-        n_heads=2,
-        activation='gelu',
-        moving_avg=25,
-        embed="fixed",
+        embed='timeF',
         freq='t',
         dropout=0.1,   # dropout rate
-        down_sampling_window=3,
-        channel_independence=True,
-        decomp_method='moving_avg',
-        down_sampling_layers=2,
-        use_norm=False,
-        down_sampling_method="avg"
+        enc_in=1,      # univariate input
+        c_out=1,       # univariate output
     )
 
+    # itransformer
+    # config = SimpleNamespace(
+    #     task_name='anomaly_detection',
+    #     seq_len=win_size,
+    #     label_len=win_size,  # unused
+    #     pred_len=0,   # no forecasting for reconstruction
+    #     d_model=8,
+    #     d_ff=16,
+    #     factor=3,
+    #     e_layers=1,    # number of TimesNet blocks
+    #     d_layers=1,
+    #     enc_in=1,      # univariate input
+    #     dec_in=1,      # univariate input
+    #     c_out=1,       # univariate output
+    #     n_heads=2,
+    #     activation='gelu',
+    #     moving_avg=25,
+    #     embed="fixed",
+    #     freq='t',
+    #     dropout=0.1,   # dropout rate
+    #     down_sampling_window=3,
+    #     channel_independence=True,
+    #     decomp_method='moving_avg',
+    #     down_sampling_layers=2,
+    #     use_norm=False,
+    #     down_sampling_method="avg"
+    # )
 
-    strides = [1, 2, 4, 8, 16]
+
+    strides = [1]#, 2, 4, 8, 16]
 
     trainer = Trainer(
         batch_size=1024,
@@ -122,7 +122,7 @@ def main():
     
     strategies = ["overlapping"]
 
-    for seed in range(3, 5, 1):
+    for seed in range(3):
         torch.manual_seed(seed)
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
@@ -131,11 +131,11 @@ def main():
         results = {"disjoint": [], "overlapping": []}
 
         for filename in tqdm(file_list):
-            model = iTransformer.Model(config)
+            model = TimesNet.Model(config)
             
             data_train, data, labels = tools.read_file(path, filename)
             trainer.win_size = win_size
-            trainer.train(model, data_train, 20)
+            trainer.train(model, data_train, 50)
             
 
             for strat in strategies:
@@ -159,7 +159,7 @@ def main():
                     results[strat].append(result)
                 
                     results_df = pd.DataFrame(results[strat])
-                    results_df.to_csv(f'results/iTransformer/{win_size}_{strat}_{seed}_strides.csv', index=False)
+                    results_df.to_csv(f'results/TimesNet/{win_size}_{50}_{strat}_{seed}_strides.csv', index=False)
 
         # print(results_df.mean(numeric_only=True).round(3)*100)
         

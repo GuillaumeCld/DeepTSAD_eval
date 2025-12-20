@@ -151,7 +151,7 @@ class Trainer:
                 inputs = batch.to(self.device)  # (B, T, ...)
 
                 # masking
-                masked_inputs, mask = masker(inputs, mask_ratio=0.3)  
+                masked_inputs, mask = masker(inputs, mask_ratio=0.15)  
 
                 optimizer.zero_grad()
                 outputs = model(masked_inputs)

@@ -71,7 +71,7 @@ def main():
     file_list = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
     file_list = pd.read_csv(file_list)['file_name'].values
 
-    win_size = 32
+    win_size = 100
 
     config = SimpleNamespace(
         task_name='anomaly_detection',
@@ -79,25 +79,16 @@ def main():
         label_len=win_size,  # unused
         pred_len=0,   # no forecasting for reconstruction
         d_model=8,
-        d_ff=16,   
+        d_ff=32,   
         factor=3,    
-        e_layers=1,    # number of TimesNet blocks     
-        d_layers=1,
+        e_layers=4,    # 
         enc_in=1,      # univariate input
         dec_in=1,      # univariate input
-        c_out=1,       # univariate output 
-        n_heads=2,
+        n_heads=4,
         activation='gelu',
-        moving_avg=25,
         embed="fixed",  
-        freq='t',       
+        freq='h',       
         dropout=0.1,   # dropout rate
-        down_sampling_window=3,
-        channel_independence=True,
-        decomp_method='moving_avg',
-        down_sampling_layers=2,
-        use_norm=False,
-        down_sampling_method="avg"
     )
     
 
@@ -113,7 +104,7 @@ def main():
         batch_size=1024,
         device='cuda',
         metrics='restr',
-        strategy='MSE'
+        strategy='overlapping'
     )
     results = []
     for filename in tqdm(file_list):
@@ -132,7 +123,7 @@ def main():
         results.append(result)
         
         results_df = pd.DataFrame(results)
-        results_df.to_csv('results/iTransformer/MSE.csv', index=False)
+        results_df.to_csv('results/iTransformer/test3.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':

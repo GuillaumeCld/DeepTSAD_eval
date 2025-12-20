@@ -25,15 +25,15 @@ class Evaluator:
             raise ValueError(f"Unknown metrics setting: {metrics}")
 
         self.strategy = strategy
-        if strategy == "overlapping":
-            self.inference_strategy = inference.combined_pointwise_profile
-        elif strategy == "disjoint":
-            self.inference_strategy = inference.disjoint_pointwise_profile
-        elif strategy == "MSE":
-            self.inference_strategy = inference.rowwise_mse
-        else:
-            raise ValueError(
-                f"Unknown inference strategy: {strategy}")
+        # if strategy == "overlapping":
+        #     self.inference_strategy = inference.combined_pointwise_profile
+        # elif strategy == "disjoint":
+        #     self.inference_strategy = inference.disjoint_pointwise_profile
+        # elif strategy == "MSE":
+        #     self.inference_strategy = inference.rowwise_mse
+        # else:
+        #     raise ValueError(
+                # f"Unknown inference strategy: {strategy}")
 
     def evaluate(self, data, label, model, win_size, stride=1):
 
@@ -265,50 +265,68 @@ class Evaluator:
         return rec_err
 
     @torch.no_grad()
-    def _masked_sliding_reconstruction(self, data, model, win_size, mask_ratio=0.3):
+    def _masked_sliding_reconstruction(self, data, model, win_size, mask_ratio=0.15):
         n = data.shape[0]
 
         rec_err = torch.zeros(n, device=self.device, dtype=torch.float32)
+        count = torch.zeros(n, device=self.device, dtype=torch.float32)
         mse_fn = torch.nn.MSELoss(reduction="none")
-        start = 0
 
-        ds = utils.ReconstructDataset(
-        data, window_size=win_size, stride=1, normalize=False)
+        ds = utils.ReconstructDataset(data, window_size=win_size, stride=1, normalize=False)
         dl = torch.utils.data.DataLoader(
-            ds, batch_size=self.batch_size, shuffle=False, drop_last=False, )
-        
+            ds, batch_size=self.batch_size, shuffle=False, drop_last=False
+        )
+
         # mask the central section of each window
-        
-        len_mask = 1 # int(win_size * mask_ratio)
+        len_mask = max(1, int(win_size * mask_ratio))  # keep at least 1
         center_start = (win_size - len_mask) // 2
         center_end = center_start + len_mask
 
-        mask = torch.zeros((1, win_size), dtype=torch.bool)
-        mask[:, center_start:center_end] = True        
-
+        # `start` = window start index in the original series (since stride=1)
+        start = 0
 
         with torch.inference_mode():
             for xb in dl:
-                xb = xb.to(self.device).float()
+                xb = xb.to(self.device).float()  # (B, win_size) expected
+
                 xb_masked = xb.clone()
-                xb_masked[:, mask.expand_as(xb)] = 0.0  # mask
+                xb_masked[:, center_start:center_end] = 0.0  # mask center
+
                 out = model(xb_masked)
+                error = mse_fn(out, xb)  # (B, win_size)
 
-                error = mse_fn(out, xb)
+                B = xb.shape[0]
 
-                end = start + xb.shape[0]
-                # add error only for the masked section
-                rec_err[start+center_start:start+center_end] = error[:, center_start:center_end].flatten()
-                start = end
+                # For window k starting at original index (start + k),
+                # masked region maps to original indices:
+                # (start + k + center_start) .. (start + k + center_end - 1)
+                base = torch.arange(B, device=self.device) + start  # window starts in original series
+                idx = base[:, None] + torch.arange(center_start, center_end, device=self.device)[None, :]
 
-     
-        
+                # write masked-region errors into rec_err
+                valid = (idx >= 0) & (idx < n)
+                error_slice = error[:, center_start:center_end]  # (B, len_mask)
+
+                # flatten everything to 1D before boolean indexing / assignment
+                idx_flat = idx.reshape(-1)                       # (B*len_mask,)
+                err_flat = error_slice.reshape(-1)               # (B*len_mask,)
+                valid_flat = valid.reshape(-1)                   # (B*len_mask,)
+
+                rec_err[idx_flat[valid_flat]] += err_flat[valid_flat]
+                count[idx_flat[valid_flat]] += 1.0
+
+                start += B  # stride=1 -> next batch windows start B later
+
+        # fill edges that cannot be “center-covered” by a full window
         rec_err[:center_start] = rec_err[center_start]
         rec_err[n - center_start:] = rec_err[n - center_start - 1]
+        count[:center_start] = count[center_start]
+        count[n - center_start:] = count[n - center_start - 1]
+        rec_err = rec_err / count.clamp_min(1)
 
         return rec_err
 
-
+    @torch.no_grad()
     def reconstruct(self, data, model, win_size):
         model = model.to(self.device)
         model.eval()
