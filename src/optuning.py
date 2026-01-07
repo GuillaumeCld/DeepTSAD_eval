@@ -2,8 +2,9 @@
 Hyperparameter tuning with Optuna optimizing AUC-PR.
 
 Usage:
-  python tune.py --config path/to/config.conf --model_config path/to/model.conf --trials 50
+1)  python src/optuning.py --config configs/experiment.conf --model_config configs/TimesNet.conf
 
+2)  optuna-dashboard sqlite:///results/optuna/aucpr.db
 Notes:
 - Expects flat .conf files (no sections). Example:
     seed = 42
@@ -108,7 +109,7 @@ def build_model(model_config):
 # ----------------------------
 # Experiment runner
 # ----------------------------
-AUC_PR_CANDIDATES = ("auc_pr", "auprc", "average_precision", "auc-pr")
+AUC_PR_CANDIDATES = ("AUC-PR", "auc_pr", "auprc", "average_precision", "auc-pr")
 
 
 def run_experiment(config, model_config, save_csv_path: str | None = None, show_progress: bool = False):
@@ -117,6 +118,8 @@ def run_experiment(config, model_config, save_csv_path: str | None = None, show_
     Returns:
       mean_auc_pr (float), results_df (DataFrame)
     """
+    model_config.seq_len = config.win_size
+    model_config.label_len = config.win_size
     trainer = Trainer(
         batch_size=config.batch_size,
         lr=config.lr,
@@ -128,14 +131,16 @@ def run_experiment(config, model_config, save_csv_path: str | None = None, show_
     evaluator = Evaluator(
         batch_size=config.batch_size,
         device=config.device,
-        metrics=config.metrics,  # list[str]
+        metrics="restr",  # list[str]
         strategy=config.strategy,
     )
 
     results = []
-    iterator = tqdm(config.file_list, disable=not show_progress)
+    file_list = pd.read_csv(config.file_list)['file_name'].values
 
-    for filename in iterator:
+
+    for filename in file_list:
+
         model = build_model(model_config)
 
         metrics = train_and_evaluate(
@@ -158,21 +163,9 @@ def run_experiment(config, model_config, save_csv_path: str | None = None, show_
         os.makedirs(os.path.dirname(save_csv_path), exist_ok=True)
         results_df.to_csv(save_csv_path, index=False)
 
-    # Auto-detect AUC-PR column
-    auc_key = None
-    for k in AUC_PR_CANDIDATES:
-        if k in results_df.columns:
-            auc_key = k
-            break
 
-    if auc_key is None:
-        raise KeyError(
-            f"Could not find AUC-PR metric in results. "
-            f"Tried keys: {AUC_PR_CANDIDATES}. "
-            f"Available columns: {list(results_df.columns)}"
-        )
 
-    mean_auc_pr = float(results_df[auc_key].mean())
+    mean_auc_pr = float(results_df["AUC-PR"].mean())
     return mean_auc_pr, results_df
 
 
@@ -189,21 +182,20 @@ def make_objective(base_config, base_model_config, trials_dir="results/optuna"):
         model_config = copy.deepcopy(base_model_config)
 
         # ---- Sample training hyperparameters ----
-        config.lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
-        config.batch_size = trial.suggest_categorical("batch_size", [16, 32, 64])
-        config.win_size = trial.suggest_categorical("win_size", [64, 96, 128, 256])
+        config.lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
+        config.win_size = trial.suggest_categorical("win_size", [16, 32, 64, 96, 128])
 
         # Optional: budgeted epochs for tuning (uncomment if you want faster tuning)
         # config.epochs = trial.suggest_categorical("epochs", [10, 20, 50])
 
         # ---- Sample model hyperparameters (only if present) ----
         # These names must match what your Model reads from model_config.
-        if hasattr(model_config, "hidden_dim"):
-            model_config.hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256])
-        if hasattr(model_config, "dropout"):
-            model_config.dropout = trial.suggest_float("dropout", 0.0, 0.5)
-        if hasattr(model_config, "num_layers"):
-            model_config.num_layers = trial.suggest_categorical("num_layers", [1, 2, 3, 4])
+        # if hasattr(model_config, "hidden_dim"):
+        #     model_config.hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256])
+        # if hasattr(model_config, "dropout"):
+        #     model_config.dropout = trial.suggest_float("dropout", 0.0, 0.5)
+        # if hasattr(model_config, "num_layers"):
+        #     model_config.num_layers = trial.suggest_categorical("num_layers", [1, 2, 3, 4])
 
         # Re-seed per trial
         base_seed = int(getattr(config, "seed", 42))
@@ -224,12 +216,23 @@ def make_objective(base_config, base_model_config, trials_dir="results/optuna"):
     return objective
 
 
-def tune_with_optuna(config, model_config, n_trials=50, study_name="aucpr_tuning"):
+def tune_with_optuna(config, model_config, n_trials=10, study_name="test"):
     sampler = optuna.samplers.TPESampler(seed=int(getattr(config, "seed", 42)))
-    study = optuna.create_study(direction="maximize", sampler=sampler, study_name=study_name)
+    storage = "sqlite:///results/optuna/aucpr.db"
+    study = optuna.create_study(
+        direction="maximize",
+        study_name=study_name,
+        sampler=sampler,
+        storage=storage,
+        load_if_exists=True,
+    )
+    def log_callback(study, trial):
+        print(
+            f"[trial {trial.number}] value={trial.value:.6f}  best={study.best_value:.6f}  params={trial.params}"
+        )
 
     objective = make_objective(config, model_config)
-    study.optimize(objective, n_trials=n_trials)
+    study.optimize(objective, n_trials=n_trials, callbacks=[log_callback], show_progress_bar=True)
 
     print("\n==== Optuna Results ====")
     print("Best mean AUC-PR:", study.best_value)
@@ -253,8 +256,8 @@ def main():
     model_config = load_config(args.model_config)
 
     # file_list and metrics are strings -> convert once
-    config.file_list = split_csv_string(getattr(config, "file_list", ""))
-    config.metrics = split_csv_string(getattr(config, "metrics", ""))
+    # config.file_list = split_csv_string(getattr(config, "file_list", ""))
+    # config.metrics = split_csv_string(getattr(config, "metrics", ""))
 
     if args.subset_files and args.subset_files > 0:
         config.file_list = config.file_list[: args.subset_files]
