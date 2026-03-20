@@ -65,22 +65,22 @@ def main():
     )
     
     # timesnet
-    # config = SimpleNamespace(
-    #     task_name='anomaly_detection',
-    #     seq_len=win_size,
-    #     label_len=win_size,  # unused
-    #     pred_len=0,   # no forecasting for reconstruction
-    #     top_k=3,
-    #     d_model=8,
-    #     d_ff=16,
-    #     num_kernels=6, # number of kernels in InceptionBlock
-    #     e_layers=1,    # number of TimesNet blocks
-    #     embed='timeF',
-    #     freq='t',
-    #     dropout=0.1,   # dropout rate
-    #     enc_in=1,      # univariate input
-    #     c_out=1,       # univariate output
-    # )
+    config = SimpleNamespace(
+        task_name='anomaly_detection',
+        seq_len=win_size,
+        label_len=win_size,  # unused
+        pred_len=0,   # no forecasting for reconstruction
+        top_k=3,
+        d_model=8,
+        d_ff=16,
+        num_kernels=6, # number of kernels in InceptionBlock
+        e_layers=1,    # number of TimesNet blocks
+        embed='timeF',
+        freq='t',
+        dropout=0.1,   # dropout rate
+        enc_in=1,      # univariate input
+        c_out=1,       # univariate output
+    )
 
     # itransformer
     # config = SimpleNamespace(
@@ -125,14 +125,19 @@ def main():
         metrics="restr",
         strategy=strat,
     )
-    win_sizes = [16, 32, 64, 96, 128]
+    win_sizes = [ 32, 64, 96, 128]  # different window sizes for ensemble
     for filename in tqdm(file_list):
         model_errors = []  # reconstruction_error per seed
 
         # Load once per file
         data_train, data, labels = tools.read_file(path, filename)
 
-        for seed in range(0, 5):
+        for seed in range(0, len(win_sizes)):
+            win_size = win_sizes[seed]
+
+            if win_size > data_train.shape[0] // 10:
+                continue
+
             # Seeding
             torch.manual_seed(seed)
             torch.cuda.manual_seed(seed)
@@ -140,11 +145,10 @@ def main():
             np.random.seed(seed)
             random.seed(seed)
 
-            win_size = win_sizes[seed]
             config.seq_len = win_size
 
             # Train a model for this seed
-            model = DLinear.Model(config)
+            model = TimesNet.Model(config)
             trainer = Trainer(
                 batch_size=1024,
                 lr=1e-2,
@@ -178,9 +182,9 @@ def main():
 
         results_df = pd.DataFrame(results)
         results_df.to_csv(
-            f"results/DLinear/ensemble_ML_{win_size}_{20}_{strat}.csv",
+            f"results/TimesNet/ensemble_ML_{win_sizes[-1]}_{20}_{strat}.csv",
             index=False
         )
-
+    print(results_df.mean(numeric_only=True))
 if __name__ == '__main__':
     main()

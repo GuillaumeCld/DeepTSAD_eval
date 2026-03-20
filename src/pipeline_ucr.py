@@ -5,7 +5,7 @@ import pandas as pd
 import os
 from types import SimpleNamespace
 
-from models import Linear, TimesNet, DLinear, iTransformer, Transformer
+from models import Linear, TimesNet, DLinear, iTransformer, Transformer, TimeMixer
 from tqdm import tqdm
 
 import numpy as np
@@ -28,10 +28,10 @@ def main():
 
     win_size = 32
 
-    config = SimpleNamespace(
-        task_name='anomaly_detection',
-        seq_len=win_size,
-    )
+    # config = SimpleNamespace(
+    #     task_name='anomaly_detection',
+    #     seq_len=win_size,
+    # )
 
     # config = SimpleNamespace(
     #     task_name='anomaly_detection',
@@ -88,22 +88,22 @@ def main():
     # )
 
     # timesnet
-    # config = SimpleNamespace(
-    #     task_name='anomaly_detection',
-    #     seq_len=win_size,
-    #     label_len=win_size,  # unused
-    #     pred_len=0,   # no forecasting for reconstruction
-    #     top_k=3,
-    #     d_model=8,
-    #     d_ff=16,
-    #     num_kernels=6, # number of kernels in InceptionBlock
-    #     e_layers=1,    # number of TimesNet blocks
-    #     embed='timeF',
-    #     freq='t',
-    #     dropout=0.1,   # dropout rate
-    #     enc_in=1,      # univariate input
-    #     c_out=1,       # univariate output
-    # )
+    config = SimpleNamespace(
+        task_name='anomaly_detection',
+        seq_len=win_size,
+        label_len=win_size,  # unused
+        pred_len=0,   # no forecasting for reconstruction
+        top_k=3,
+        d_model=8,
+        d_ff=16,
+        num_kernels=6, # number of kernels in InceptionBlock
+        e_layers=1,    # number of TimesNet blocks
+        embed='timeF',
+        freq='t',
+        dropout=0.1,   # dropout rate
+        enc_in=1,      # univariate input
+        c_out=1,       # univariate output
+    )
 
     # dlinear
     # config = SimpleNamespace(
@@ -134,59 +134,89 @@ def main():
     # )
 
     # itransformer
-    config = SimpleNamespace(
-        task_name='anomaly_detection',
-        seq_len=win_size,
-        label_len=win_size,  # unused
-        pred_len=0,   # no forecasting for reconstruction
-        d_model=8,
-        d_ff=16,
-        factor=3,
-        e_layers=1,    # number of TimesNet blocks
-        d_layers=1,
-        enc_in=1,      # univariate input
-        dec_in=1,      # univariate input
-        c_out=1,       # univariate output
-        n_heads=2,
-        activation='gelu',
-        moving_avg=25,
-        embed="fixed",
-        freq='t',
-        dropout=0.1,   # dropout rate
-        down_sampling_window=3,
-        channel_independence=True,
-        decomp_method='moving_avg',
-        down_sampling_layers=2,
-        use_norm=False,
-        down_sampling_method="avg"
-    )
+    # config = SimpleNamespace(
+    #     task_name='anomaly_detection',
+    #     seq_len=win_size,
+    #     label_len=win_size,  # unused
+    #     pred_len=0,   # no forecasting for reconstruction
+    #     d_model=8,
+    #     d_ff=16,
+    #     factor=3,
+    #     e_layers=1,    # number of TimesNet blocks
+    #     d_layers=1,
+    #     enc_in=1,      # univariate input
+    #     dec_in=1,      # univariate input
+    #     c_out=1,       # univariate output
+    #     n_heads=2,
+    #     activation='gelu',
+    #     moving_avg=25,
+    #     embed="fixed",
+    #     freq='t',
+    #     dropout=0.1,   # dropout rate
+    #     down_sampling_window=3,
+    #     channel_independence=True,
+    #     decomp_method='moving_avg',
+    #     down_sampling_layers=2,
+    #     use_norm=False,
+    #     down_sampling_method="avg"
+    # )
+
     # transformer
-    config = SimpleNamespace(
-        task_name='anomaly_detection',
-        seq_len=win_size,
-        label_len=win_size,  # unused
-        pred_len=0,   # no forecasting for reconstruction
-        d_model=8,
-        d_ff=16,
-        factor=3,
-        e_layers=1,    # number of TimesNet blocks
-        d_layers=1,
-        enc_in=1,      # univariate input
-        dec_in=1,      # univariate input
-        c_out=1,       # univariate output
-        n_heads=2,
-        activation='gelu',
-        moving_avg=25,
-        embed="fixed",
-        freq='t',
-        dropout=0.1,   # dropout rate
-        down_sampling_window=3,
-        channel_independence=True,
-        decomp_method='moving_avg',
-        down_sampling_layers=2,
-        use_norm=False,
-        down_sampling_method="avg"
-    )
+    # config = SimpleNamespace(
+    #     task_name='anomaly_detection',
+    #     seq_len=win_size,
+    #     label_len=win_size,  # unused
+    #     pred_len=0,   # no forecasting for reconstruction
+    #     d_model=8,
+    #     d_ff=16,
+    #     factor=3,
+    #     e_layers=1,    # number of TimesNet blocks
+    #     d_layers=1,
+    #     enc_in=1,      # univariate input
+    #     dec_in=1,      # univariate input
+    #     c_out=1,       # univariate output
+    #     n_heads=2,
+    #     activation='gelu',
+    #     moving_avg=25,
+    #     embed="fixed",
+    #     freq='t',
+    #     dropout=0.1,   # dropout rate
+    #     down_sampling_window=3,
+    #     channel_independence=True,
+    #     decomp_method='moving_avg',
+    #     down_sampling_layers=2,
+    #     use_norm=False,
+    #     down_sampling_method="avg"
+    # )
+
+    # timemixer
+    # config = SimpleNamespace(
+    #     task_name='anomaly_detection',
+    #     seq_len=win_size,
+    #     label_len=win_size,  # unused
+    #     pred_len=0,   # no forecasting for reconstruction
+    #     d_model=8,
+    #     d_ff=16,   
+    #     factor=3,    
+    #     e_layers=1,    # number of TimesNet blocks     
+    #     d_layers=1,
+    #     enc_in=1,      # univariate input
+    #     dec_in=1,      # univariate input
+    #     c_out=1,       # univariate output 
+    #     n_heads=2,
+    #     activation='gelu',
+    #     moving_avg=25,
+    #     embed="fixed",  
+    #     freq='t',       
+    #     dropout=0.1,   # dropout rate
+    #     down_sampling_window=3,
+    #     channel_independence=True,
+    #     decomp_method='moving_avg',
+    #     down_sampling_layers=2,
+    #     use_norm=False,
+    #     down_sampling_method="avg"
+    # )
+    
 
     trainer = Trainer(
         batch_size=1024,
@@ -220,8 +250,8 @@ def main():
             start -= split
             end -= split
 
-            model = Transformer.Model(config)
-            trainer.train(model, train_data, 20)
+            model = Linear.Model(config)
+            trainer.train_low_freq(model, train_data, 20)
 
             for strat in strategies:
                 evaluator = Evaluator(batch_size=1024, device='cuda',
@@ -240,7 +270,7 @@ def main():
 
                 results_df = pd.DataFrame(results[strat])
                 results_df.to_csv(
-                    f'results/Transformer/ucr_{win_size}_{strat}_{seed}.csv', index=False)
+                    f'results/Linear/LF_ucr_{win_size}_{strat}_{seed}_128.csv', index=False)
 
         for strat in strategies:
             print(

@@ -11,7 +11,7 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import random
-
+import tools
 
 
 def _read_file(path, filename):
@@ -55,7 +55,6 @@ def train_and_evaluate(path,
     return evaluator.evaluate(data, labels, model, win_size)
 
 
-
 def main():
 
     # fix seed for reproducibility
@@ -79,29 +78,22 @@ def main():
         label_len=win_size,  # unused
         pred_len=0,   # no forecasting for reconstruction
         d_model=8,
-        d_ff=16,   
-        factor=3,    
-        e_layers=1,    # number of TimesNet blocks     
-        d_layers=1,
+        d_ff=16,
+        factor=3,
+        e_layers=1,    # number of encoder blocks
+        d_layers=1,    # number of decoder blocks
         enc_in=1,      # univariate input
         dec_in=1,      # univariate input
-        c_out=1,       # univariate output 
+        c_out=1,       # univariate output
         n_heads=2,
         activation='gelu',
-        moving_avg=25,
-        embed="fixed",  
-        freq='t',       
-        dropout=0.1,   # dropout rate
-        down_sampling_window=3,
-        channel_independence=True,
-        decomp_method='moving_avg',
-        down_sampling_layers=2,
-        use_norm=False,
+        embed="fixed",
+        freq='t',
+        dropout=0.1,   # dropout rate,
+        p_hidden_layers=2,  # number of hidden layers in projection head for anomaly detection
         p_hidden_dims=[64, 32]
     )
-    
 
-    
     trainer = Trainer(
         batch_size=1024,
         lr=1e-2,
@@ -115,25 +107,49 @@ def main():
         metrics='restr',
         strategy='overlapping'
     )
-    results = []
-    for filename in tqdm(file_list[::10]):
-        model = Nonstationary_Transformer.Model(config)
-        metrics = train_and_evaluate(
-            path,
-            filename,
-            model,
-            trainer,
-            evaluator,
-            win_size=win_size,
-            epochs=20
-        )
-        result = {'filename': filename}
-        result.update(metrics)
-        results.append(result)
-        
-        results_df = pd.DataFrame(results)
-        results_df.to_csv('Nonstationary_Transformer_TSB-AD-U_results_mean_short.csv', index=False)
+    for seed in range(0, 1, 1):
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        results = []
+        for filename in tqdm(file_list):
+            model = Nonstationary_Transformer.Model(config)
+            metrics = train_and_evaluate(
+                path,
+                filename,
+                model,
+                trainer,
+                evaluator,
+                win_size=win_size,
+                epochs=20
+            )
+            _, data, labels = tools.read_file(path, filename)
 
-    print(results_df.mean(numeric_only=True).round(3)*100)
+            relative_error = evaluator.relative_reconstruction_error(
+                data, model, win_size)
+
+            rel_erruer_normal = relative_error[labels == 0].mean()
+            rel_erreur_anomalie = relative_error[labels == 1].mean()
+            top_1_normal = relative_error[labels == 0].max()
+            top_1_anomalie = relative_error[labels == 1].max()
+
+            result = {'filename': filename,
+                      'rel_normal': rel_erruer_normal.item(),
+                      'rel_abnormal': rel_erreur_anomalie.item(),
+                      'top1_normal': top_1_normal.item(),
+                      'top1_abnormal': top_1_anomalie.item()
+                      }
+            result.update(metrics)
+            results.append(result)
+
+            results_df = pd.DataFrame(results)
+            results_df.to_csv(
+                'results/Nonstationary_Transformer/32_e2.csv', index=False)
+
+        print(results_df.mean(numeric_only=True).round(3)*100)
+
+
 if __name__ == '__main__':
     main()

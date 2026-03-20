@@ -16,15 +16,16 @@ def read_file(path, filename):
     # normalize data globally
     data_mean = data.mean(axis=0)
     data_std = data.std(axis=0)
-    # Avoid division by zero
+    # # Avoid division by zero
     data_std = np.where(data_std == 0, 1e-8, data_std)
 
     data = (data - data_mean) / data_std
 
     train_index = filename.split('.')[0].split('_')[-3]
     data_train = data[:int(train_index), :]
+    data_test = data#[int(train_index):, :]
 
-    return data_train, data, label
+    return data_train, data_test, label#[int(train_index):]
 
 
 class ReconstructDataset(torch.utils.data.Dataset):

@@ -254,5 +254,4 @@ def main():
 
 
 if __name__ == "__main__":
-    for seed in [5,6,7]:
-        main(seed)
+    main()

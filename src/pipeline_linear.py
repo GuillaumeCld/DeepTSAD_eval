@@ -22,7 +22,7 @@ def main():
     file_list = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
     file_list = pd.read_csv(file_list)['file_name'].values
 
-    win_size = 32
+    win_size = 96
 
     config = SimpleNamespace(
         task_name='anomaly_detection',
@@ -67,7 +67,7 @@ def main():
         results.append(result)
         
         results_df = pd.DataFrame(results)
-        results_df.to_csv(f'results/Linear/32_{seed}.csv', index=False)
+        results_df.to_csv(f'results/Linear/LF_32_{seed}.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':

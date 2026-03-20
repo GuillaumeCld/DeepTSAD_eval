@@ -8,12 +8,16 @@ def train_and_evaluate(path,
                        evaluator,
                        win_size=None,
                        epochs=20,
-                       stride=1):
+                       stride=1, 
+                       data=None):
     """
     Read dataset from filename, train model and evaluate.
     trainer and evaluator should be instantiated by the caller.
     """
-    data_train, data, labels = read_file(path, filename)
+    if data is not None:
+        data_train, data, labels = data
+    else:
+        data_train, data, labels = read_file(path, filename)
 
     if win_size is None:
         win_size = trainer.win_size

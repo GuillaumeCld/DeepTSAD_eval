@@ -11,7 +11,7 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import random
-
+import tools
 
 
 def _read_file(path, filename):
@@ -68,7 +68,7 @@ def main():
     random.seed(seed)
 
     path = 'Datasets/TSB-AD-U/'
-    file_list = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
+    file_list = 'Datasets/File_List/TSB-AD-U-Eva.csv'
     file_list = pd.read_csv(file_list)['file_name'].values
 
     win_size = 32
@@ -121,12 +121,27 @@ def main():
             win_size=win_size,
             epochs=20
         )
-        result = {'filename': filename}
+        _, data, labels = tools.read_file(path, filename)
+
+        relative_error = evaluator.relative_reconstruction_error(
+            data, model, win_size)
+
+        rel_erruer_normal = relative_error[labels == 0].mean()
+        rel_erreur_anomalie = relative_error[labels == 1].mean()
+        top_1_normal = relative_error[labels == 0].max()
+        top_1_anomalie = relative_error[labels == 1].max()
+
+        result = {'filename': filename,
+                  'rel_normal': rel_erruer_normal.item(),
+                  'rel_abnormal': rel_erreur_anomalie.item(),
+                  'top1_normal': top_1_normal.item(),
+                  'top1_abnormal': top_1_anomalie.item()
+                  }
         result.update(metrics)
         results.append(result)
         
         results_df = pd.DataFrame(results)
-        results_df.to_csv('results/Autoformer/disjoint.csv', index=False)
+        results_df.to_csv(f'results/Autoformer/eval_{evaluator.strategy}.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':

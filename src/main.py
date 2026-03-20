@@ -58,7 +58,7 @@ def main(config_path: str, model_config_path: str):
     model_config.seq_len = config.win_size
     model_config.label_len = config.win_size
 
-
+ 
     # Seeding
     random.seed(config.seed)
     np.random.seed(config.seed)

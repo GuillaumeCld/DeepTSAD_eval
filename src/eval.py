@@ -76,57 +76,65 @@ class Evaluator:
 
         return reconstruction_error.cpu().numpy()
 
-        # n = data.shape[0]
-        # ds = utils.ReconstructDataset(
-        #     data, window_size=win_size, stride=1, normalize=False
-        # )
-        # dl = torch.utils.data.DataLoader(
-        #     ds,
-        #     batch_size=self.batch_size,
-        #     shuffle=False,
-        #     drop_last=False,
-        # )
+    def relative_reconstruction_error(self, data, model, win_size, stride=1):
+        if self.strategy == "overlapping":
+            n = data.shape[0]
+            sum_err = torch.zeros(n, device=self.device, dtype=torch.float32)
+            mse_fn = torch.nn.L1Loss(reduction="none")
+            start = 0
 
-        # outs = []
-        # with torch.inference_mode():
-        #     for xb in dl:
-        #         xb = xb.to(self.device).float()
-        #         out = model(xb)
+            ds = utils.ReconstructDataset(
+            data, window_size=win_size, stride=stride, normalize=False)
+            dl = torch.utils.data.DataLoader(
+                ds, batch_size=self.batch_size, shuffle=False, drop_last=False, )
 
-        #         outs.append(out.cpu())
+            with torch.inference_mode():
+                for xb in dl:
+                    xb = xb.to(self.device).float()
+                    out = model(xb)
 
-        # if len(data.shape) == 2 and data.shape[1] > 1:
-        #     output = torch.cat(outs, dim=0).numpy()
+                    error = mse_fn(out, xb).sum(dim=-1)  # (B,W)
+                    sum_err = self.update_sum_with_batch_fold(
+                        sum_err, error, start, n, win_size, stride)
+                    start += xb.shape[0] * stride
+            rec_err = self.finalize_avg(
+                sum_err, self._count_closed_form(n, win_size, stride, self.device))
+            
+        elif self.strategy == "disjoint":
+            n = data.shape[0]
+            rec_err = torch.zeros(n, device=self.device, dtype=torch.float32)
+            mse_fn = torch.nn.MSELoss(reduction="none")
+            start = 0
 
-        #     # multivariate case: compute pointwise squared error per variable and average
-        #     reconstruction_errors = []
-        #     for dim in range(data.shape[1]):
-        #         data_seq = inference.make_sequences_1d(
-        #             data[:, dim], win_size)  # (n - w + 1, w)
-        #         pw_error = inference.squared_pointwise_error_numpy(
-        #             data_seq, output[:, :, dim])
-        #         reconstruction_error = self.inference_strategy(
-        #             pw_error, n, win_size)
-        #         reconstruction_errors.append(reconstruction_error)
-        #     reconstruction_error = np.mean(
-        #         np.stack(reconstruction_errors, axis=1), axis=1)
+            ds = utils.ReconstructDataset(
+            data, window_size=win_size, stride=win_size, normalize=False, add_last_partial=True)
+            # since stride > 1, the last window is partial and is stored as data[-window_size:]
+            dl = torch.utils.data.DataLoader(
+                ds, batch_size=self.batch_size, shuffle=False, drop_last=False, )
 
-        # else:
-        #     output = torch.cat(outs, dim=0).numpy()[:, :, 0]
+            with torch.inference_mode():
+                for xb in dl:
+                    xb = xb.to(self.device).float()
+                    out = model(xb)
 
-        #     data_seq = inference.make_sequences_1d(
-        #         data.ravel(), win_size)  # (n - w + 1, w)
-        #     pw_error = inference.squared_pointwise_error_numpy(
-        #         data_seq, output)
-        #     reconstruction_error = self.inference_strategy(
-        #         pw_error, n, win_size)
+                    error = mse_fn(out, xb)  # (B,W)
+                    end = start + xb.shape[0] * win_size
 
-        # # Pad to match original length when using "MSE" strategy
-        # if reconstruction_error.shape[0] < len(data):
-        #     reconstruction_error = np.array([reconstruction_error[0]]*math.ceil((win_size-1)/2) +
-        #                                     list(reconstruction_error) + [reconstruction_error[-1]]*((win_size-1)//2))
+                    if end > n:
+                        end = n
+                        full_windows = (xb.shape[0]-1) * win_size 
+                        remainder = n % win_size
+                        if remainder == 0:
+                            remainder = win_size
+                        rec_err[start:start+full_windows] = error.flatten()[:full_windows]
+                        rec_err[-remainder:] = error[-1, -remainder:].flatten()
+                        break
+                    else:
+                        rec_err[start:end] = error.flatten()
+                        start = end
 
-        # return reconstruction_error
+        return rec_err
+
 
     @torch.no_grad()
     def _count_closed_form(self, n: int, w: int, s: int, device=None) -> torch.Tensor:
@@ -196,6 +204,30 @@ class Evaluator:
             sum_err, self._count_closed_form(n, win_size, stride, self.device))
         return rec_err
     
+    @torch.no_grad()
+    def overlapping_reconstruct(self, data, model, win_size, stride):
+        n = data.shape[0]
+        recon = torch.zeros(n, device=self.device, dtype=torch.float32)
+        start = 0
+
+        ds = utils.ReconstructDataset(
+        data, window_size=win_size, stride=stride, normalize=False)
+        dl = torch.utils.data.DataLoader(
+            ds, batch_size=self.batch_size, shuffle=False, drop_last=False, )
+
+        with torch.inference_mode():
+            for xb in dl:
+                xb = xb.to(self.device).float()
+                out = model(xb).sum(dim=-1)  # (B,)
+
+                recon = self.update_sum_with_batch_fold(
+                    recon, out, start, n, win_size, stride)
+                start += xb.shape[0] * stride
+        rec_err = self.finalize_avg(
+            recon, self._count_closed_form(n, win_size, stride, self.device))
+        return rec_err
+    
+
     @torch.no_grad()
     def _disjoint_reconstruction(self, data, model, win_size):
         n = data.shape[0]

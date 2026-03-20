@@ -12,49 +12,9 @@ import numpy as np
 import torch
 import random
 
+import tools 
 
-
-def _read_file(path, filename):
-    file_path = os.path.join(path, filename)
-
-    df = pd.read_csv(file_path).dropna()
-    data = df.iloc[:, 0:-1].values.astype(float)
-    label = df['Label'].astype(int).to_numpy()
-
-    # normalize data globally
-    data_mean = data.mean()
-    data_std = data.std()
-    data = (data - data_mean) / data_std
-
-    train_index = filename.split('.')[0].split('_')[-3]
-    data_train = data[:int(train_index), :]
-
-    return data_train, data, label
-
-
-def train_and_evaluate(path,
-                       filename,
-                       model,
-                       trainer,
-                       evaluator,
-                       win_size=None,
-                       epochs=20):
-    """
-    Read dataset from filename, train model and evaluate.
-    trainer and evaluator should be instantiated by the caller.
-    """
-    data_train, data, labels = _read_file(path, filename)
-
-    if win_size is None:
-        win_size = trainer.win_size
-    else:
-        trainer.win_size = win_size
-
-    trainer.train(model, data_train, epochs)
-
-    return evaluator.evaluate(data, labels, model, win_size)
-
-
+from procedure import train_and_evaluate
 
 def main():
 
@@ -125,14 +85,28 @@ def main():
             trainer,
             evaluator,
             win_size=win_size,
-            epochs=20
+            epochs=50
         )
-        result = {'filename': filename}
+        _, data, labels = tools.read_file(path, filename)
+
+        relative_error = evaluator.relative_reconstruction_error(
+            data, model, win_size)
+
+        rel_erruer_normal = relative_error[labels == 0].mean()
+        rel_erreur_anomalie = relative_error[labels == 1].mean()
+        top_1_normal = relative_error[labels == 0].max()
+        top_1_anomalie = relative_error[labels == 1].max()
+
+        result = {'filename': filename,
+                  'rel_normal': rel_erruer_normal.item(),
+                  'rel_abnormal': rel_erreur_anomalie.item(),
+                  'top1_normal': top_1_normal.item(),
+                  'top1_abnormal': top_1_anomalie.item()
+                  }
         result.update(metrics)
         results.append(result)
-        
         results_df = pd.DataFrame(results)
-        results_df.to_csv('results/TimeMixer/overlapping.csv', index=False)
+        results_df.to_csv('results/TimeMixer/32_50.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':

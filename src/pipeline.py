@@ -15,6 +15,7 @@ import random
 from procedure import train_and_evaluate, compare_reconstruction
 
 import pairedtest
+import tools
 
 
 def main():
@@ -29,10 +30,10 @@ def main():
     random.seed(seed)
 
     path = 'Datasets/TSB-AD-U/'
-    file_list = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
+    file_list = 'Datasets/File_List/TSB-AD-U-Eva.csv'
     file_list = pd.read_csv(file_list)['file_name'].values
 
-    win_size = 64
+    win_size = 32
 
     config = SimpleNamespace(
         task_name='anomaly_detection',
@@ -41,33 +42,32 @@ def main():
         pred_len=0,   # no forecasting for reconstruction
         top_k=3,
         d_model=8,
-        d_ff=16,       
-        num_kernels=6, # number of kernels in InceptionBlock
+        d_ff=16,
+        num_kernels=6,  # number of kernels in InceptionBlock
         e_layers=1,    # number of TimesNet blocks
-        embed='timeF',  
-        freq='t',       
+        embed='timeF',
+        freq='t',
         dropout=0.1,   # dropout rate
         enc_in=1,      # univariate input
-        c_out=1,       # univariate output 
+        c_out=1,       # univariate output
     )
-    
 
-    
     trainer = Trainer(
-        batch_size=4096,
-        lr=1e-2,
+        batch_size=1024,
+        lr=1e-3,
         device='cuda',
         win_size=win_size,
         validation_size=0.2
     )
     evaluator = Evaluator(
-        batch_size=4096,
+        batch_size=1024,
         device='cuda',
         metrics='restr',
-        strategy='overlapping'
+        strategy='disjoint'
     )
     results = []
     for filename in tqdm(file_list):
+
         model = TimesNet.Model(config)
         metrics = train_and_evaluate(
             path,
@@ -78,12 +78,31 @@ def main():
             win_size=win_size,
             epochs=20
         )
-        result = {'filename': filename}
+
+        # _, data, labels = tools.read_file(path, filename)
+
+        # relative_error = evaluator.relative_reconstruction_error(
+        #     data, model, win_size)
+
+        # rel_erruer_normal = relative_error[labels == 0].mean()
+        # rel_erreur_anomalie = relative_error[labels == 1].mean()
+        # top_1_normal = relative_error[labels == 0].max()
+        # top_1_anomalie = relative_error[labels == 1].max()
+
+        # stop_epoch = 20 # trainer.early_stop_epoch
+
+        result = {'filename': filename,
+                #   'rel_normal': rel_erruer_normal.item(),
+                #   'rel_abnormal': rel_erreur_anomalie.item(),
+                #   'top1_normal': top_1_normal.item(),
+                #   'top1_abnormal': top_1_anomalie.item(),
+                #   'stop_epoch': stop_epoch
+                  }
         result.update(metrics)
         results.append(result)
-        
         results_df = pd.DataFrame(results)
-        results_df.to_csv(f'results/TimesNet/mean_64.csv', index=False)
+        results_df.to_csv(
+            f'results/TimesNet/eval_{evaluator.strategy}.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 

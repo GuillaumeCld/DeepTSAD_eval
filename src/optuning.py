@@ -182,7 +182,7 @@ def make_objective(base_config, base_model_config, trials_dir="results/optuna"):
         model_config = copy.deepcopy(base_model_config)
 
         # ---- Sample training hyperparameters ----
-        config.lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
+        config.lr = trial.suggest_categorical("lr", [1e-4, 5e-4, 1e-3, 5e-3, 1e-2])
         config.win_size = trial.suggest_categorical("win_size", [16, 32, 64, 96, 128])
 
         # Optional: budgeted epochs for tuning (uncomment if you want faster tuning)
