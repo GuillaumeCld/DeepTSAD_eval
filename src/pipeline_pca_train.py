@@ -25,7 +25,7 @@ def main():
     random.seed(seed)
 
     path = 'Datasets/TSB-AD-U/'
-    file_list_path = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
+    file_list_path = 'Datasets/File_List/TSB-AD-U-Eva.csv'
     file_list = pd.read_csv(file_list_path)['file_name'].values
 
     evaluator = Evaluator(metrics='restr')
@@ -33,7 +33,7 @@ def main():
     all_results = []
     results = []
 
-    for seeds in range(5):
+    for seeds in range(1):
         seed = seeds
         torch.manual_seed(seed)
         torch.cuda.manual_seed(seed)
@@ -46,7 +46,7 @@ def main():
             rank = find_length_rank(data[:, 0].reshape(-1, 1), rank=1)
 
 
-            window_length = rank
+            window_length = 96
 
 
             # ----- TRAIN WINDOWS -----
@@ -64,7 +64,7 @@ def main():
             U, S, Vt = np.linalg.svd(sequences_train, full_matrices=False)
 
             # keep components
-            num_components = np.searchsorted(np.cumsum(S**2) / np.sum(S**2), 0.75) + 1
+            num_components = np.searchsorted(np.cumsum(S**2) / np.sum(S**2), 0.5) + 1
             V_k = Vt[:num_components]
 
             # ----- FULL DATA WINDOWS -----

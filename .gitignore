@@ -1,5 +1,7 @@
 results/**/*.csv
-Datasets/*
+Datasets/TSB-AD-U/*
+Datasets/TSB-AD-M/*
+Datasets/UCR
 src/**/__pycache__
 src/*.egg-info
 .vscode/
