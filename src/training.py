@@ -5,86 +5,86 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 
 from tools import ReconstructDataset, my_kl_loss
-import stumpy
+# import stumpy
 
 
 def MARE(preds, target):
     return (preds - target).abs().mean() / (target.abs().mean() + 1e-8)
 
 
-class WindowMPDataset(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        data,
-        window_size,
-        stride=1,
-        normalize=True,
-        add_last_partial=False,
-    ):
-        super().__init__()
+# class WindowMPDataset(torch.utils.data.Dataset):
+#     def __init__(
+#         self,
+#         data,
+#         window_size,
+#         stride=1,
+#         normalize=True,
+#         add_last_partial=False,
+#     ):
+#         super().__init__()
 
-        self.window_size = window_size
-        self.stride = stride
-        self.add_last_partial = add_last_partial
+#         self.window_size = window_size
+#         self.stride = stride
+#         self.add_last_partial = add_last_partial
 
-        # Normalize (before MP computation)
-        self.data = self._normalize_data(data) if normalize else data
-        self.univariate = self.data.shape[1] == 1
+#         # Normalize (before MP computation)
+#         self.data = self._normalize_data(data) if normalize else data
+#         self.univariate = self.data.shape[1] == 1
 
-        # Matrix profile must be computed on 1D series
-        if not self.univariate:
-            raise ValueError("Matrix profile requires univariate input (shape: [N, 1])")
+#         # Matrix profile must be computed on 1D series
+#         if not self.univariate:
+#             raise ValueError("Matrix profile requires univariate input (shape: [N, 1])")
 
-        ts_1d = self.data.squeeze()
+#         ts_1d = self.data.squeeze()
 
-        # Compute matrix profile
-        mp = stumpy.gpu_stump(ts_1d, window_size)
-        self.matrix_profile = mp[:, 0].astype(np.float32)
+#         # Compute matrix profile
+#         mp = stumpy.gpu_stump(ts_1d, window_size)
+#         self.matrix_profile = mp[:, 0].astype(np.float32)
 
-        # Compute number of sliding windows
-        self.sample_num = max(
-            0, (len(ts_1d) - window_size) // stride + 1
-        )
+#         # Compute number of sliding windows
+#         self.sample_num = max(
+#             0, (len(ts_1d) - window_size) // stride + 1
+#         )
 
-        self.samples, self.targets = self._generate_samples(ts_1d)
+#         self.samples, self.targets = self._generate_samples(ts_1d)
 
-    def _normalize_data(self, data, epsilon=1e-8):
-        mean = np.mean(data, axis=0)
-        std = np.std(data, axis=0)
-        std = np.where(std == 0, epsilon, std)
-        return (data - mean) / std
+#     def _normalize_data(self, data, epsilon=1e-8):
+#         mean = np.mean(data, axis=0)
+#         std = np.std(data, axis=0)
+#         std = np.where(std == 0, epsilon, std)
+#         return (data - mean) / std
 
-    def _generate_samples(self, ts_1d):
-        data = torch.tensor(ts_1d, dtype=torch.float32)
+#     def _generate_samples(self, ts_1d):
+#         data = torch.tensor(ts_1d, dtype=torch.float32)
 
-        # Generate sliding windows
-        X = torch.stack([
-            data[i * self.stride: i * self.stride + self.window_size]
-            for i in range(self.sample_num)
-        ])
+#         # Generate sliding windows
+#         X = torch.stack([
+#             data[i * self.stride: i * self.stride + self.window_size]
+#             for i in range(self.sample_num)
+#         ])
 
-        # Targets aligned with window start indices
-        y = torch.tensor(
-            self.matrix_profile[::self.stride][:self.sample_num],
-            dtype=torch.float32
-        )
+#         # Targets aligned with window start indices
+#         y = torch.tensor(
+#             self.matrix_profile[::self.stride][:self.sample_num],
+#             dtype=torch.float32
+#         )
 
-        # Optional last partial window
-        if self.add_last_partial and self.stride > 1:
-            X = torch.cat([X, data[-self.window_size:].unsqueeze(0)], dim=0)
-            y = torch.cat([y, torch.tensor([self.matrix_profile[-1]], dtype=torch.float32)])
-            self.sample_num += 1
+#         # Optional last partial window
+#         if self.add_last_partial and self.stride > 1:
+#             X = torch.cat([X, data[-self.window_size:].unsqueeze(0)], dim=0)
+#             y = torch.cat([y, torch.tensor([self.matrix_profile[-1]], dtype=torch.float32)])
+#             self.sample_num += 1
 
-        # Add feature dimension (N, W, 1)
-        X = X.unsqueeze(-1)
+#         # Add feature dimension (N, W, 1)
+#         X = X.unsqueeze(-1)
 
-        return X, y
+#         return X, y
 
-    def __len__(self):
-        return self.sample_num
+#     def __len__(self):
+#         return self.sample_num
 
-    def __getitem__(self, index):
-        return self.samples[index], self.targets[index]
+#     def __getitem__(self, index):
+#         return self.samples[index], self.targets[index]
 
 
 class WarmupPlateauEscapeLR:
