@@ -111,7 +111,7 @@ def objective(trial):
     # ----------------------
     win_size = trial.suggest_categorical("win_size", [32, 64, 96])
     lr = trial.suggest_categorical("lr", [1e-4, 1e-3, 1e-2])
-    epochs = trial.suggest_categorical("epochs", [10, 30])
+    epochs = trial.suggest_categorical("epochs", [10, 20, 30])
 
     # ----------------------
     # Model-specific params
@@ -134,6 +134,11 @@ def objective(trial):
             enc_in=1,
         )
     elif model_name == "TimesNet":
+        top_k = trial.suggest_categorical("top_k", [3, 5, 7])
+        d_model = trial.suggest_categorical("d_model", [8, 16, 32])
+        d_ff = trial.suggest_categorical("d_ff", [16, 32, 64])
+        num_kernels = trial.suggest_categorical("num_kernels", [4, 6, 8])
+        e_layers = trial.suggest_categorical("e_layers", [1, 2, 3])
         config = SimpleNamespace(
             task_name='anomaly_detection',
             seq_len=win_size,
@@ -142,11 +147,11 @@ def objective(trial):
             dropout=0.1,
             enc_in=1,
             c_out=1,
-            top_k=3,
-            d_model=8,
-            d_ff=16,
-            num_kernels=6,
-            e_layers=1,
+            top_k=top_k,
+            d_model=d_model,
+            d_ff=d_ff,
+            num_kernels=num_kernels,
+            e_layers=e_layers,
             embed="timeF",
             freq="t",
         )
@@ -226,7 +231,7 @@ def main():
 
     study = optuna.create_study(
         direction="maximize",
-        study_name="TimesNet_constant_seeded_1024_1",
+        study_name="TimesNet_big_tuning",
         storage="sqlite:///optuna.db",   # persistent + parallel-safe
         load_if_exists=True,
         pruner=pruner,
@@ -234,7 +239,12 @@ def main():
             {
                 "win_size": [32, 64, 96],
                 "lr": [1e-4, 1e-3, 1e-2],
-                "epochs": [10, 30],
+                "epochs": [10, 20, 30],
+                "top_k": [3, 5, 7],
+                "d_model": [8, 16, 32],
+                "d_ff": [16, 32, 64],
+                "num_kernels": [4, 6, 8],
+                "e_layers": [1, 2, 3],
                 # "moving_avg_ratio": [0.1, 0.25, 0.5, 0.75],
             }
         )
