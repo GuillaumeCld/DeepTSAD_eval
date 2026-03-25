@@ -21,90 +21,89 @@ import tools
 def main():
 
     # fix seed for reproducibility
+    for seed in [3, 4, 5, 6, 7]:
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
+        random.seed(seed)
 
-    seed = 1
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+        path = 'Datasets/TSB-AD-U/'
+        file_list = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
+        file_list = pd.read_csv(file_list)['file_name'].values
 
-    path = 'Datasets/TSB-AD-U/'
-    file_list = 'Datasets/File_List/TSB-AD-U-Eva.csv'
-    file_list = pd.read_csv(file_list)['file_name'].values
+        win_size = 64
 
-    win_size = 32
-
-    config = SimpleNamespace(
-        task_name='anomaly_detection',
-        seq_len=win_size,
-        label_len=win_size,  # unused
-        pred_len=0,   # no forecasting for reconstruction
-        top_k=3,
-        d_model=8,
-        d_ff=16,
-        num_kernels=6,  # number of kernels in InceptionBlock
-        e_layers=1,    # number of TimesNet blocks
-        embed='timeF',
-        freq='t',
-        dropout=0.1,   # dropout rate
-        enc_in=1,      # univariate input
-        c_out=1,       # univariate output
-    )
-
-    trainer = Trainer(
-        batch_size=1024,
-        lr=1e-3,
-        device='cuda',
-        win_size=win_size,
-        validation_size=0.2
-    )
-    evaluator = Evaluator(
-        batch_size=1024,
-        device='cuda',
-        metrics='restr',
-        strategy='disjoint'
-    )
-    results = []
-    for filename in tqdm(file_list):
-
-        model = TimesNet.Model(config)
-        metrics = train_and_evaluate(
-            path,
-            filename,
-            model,
-            trainer,
-            evaluator,
-            win_size=win_size,
-            epochs=20
+        config = SimpleNamespace(
+            task_name='anomaly_detection',
+            seq_len=win_size,
+            label_len=win_size,  # unused
+            pred_len=0,   # no forecasting for reconstruction
+            top_k=3,
+            d_model=8,
+            d_ff=16,
+            num_kernels=6,  # number of kernels in InceptionBlock
+            e_layers=1,    # number of TimesNet blocks
+            embed='timeF',
+            freq='t',
+            dropout=0.1,   # dropout rate
+            enc_in=1,      # univariate input
+            c_out=1,       # univariate output
         )
 
-        # _, data, labels = tools.read_file(path, filename)
+        trainer = Trainer(
+            batch_size=1024,
+            lr=1e-2,
+            device='cuda',
+            win_size=win_size,
+            validation_size=0.2
+        )
+        evaluator = Evaluator(
+            batch_size=1024,
+            device='cuda',
+            metrics='restr',
+            strategy='overlapping'
+        )
+        results = []
+        for filename in tqdm(file_list):
 
-        # relative_error = evaluator.relative_reconstruction_error(
-        #     data, model, win_size)
+            model = TimesNet.Model(config)
+            metrics = train_and_evaluate(
+                path,
+                filename,
+                model,
+                trainer,
+                evaluator,
+                win_size=win_size,
+                epochs=10
+            )
 
-        # rel_erruer_normal = relative_error[labels == 0].mean()
-        # rel_erreur_anomalie = relative_error[labels == 1].mean()
-        # top_1_normal = relative_error[labels == 0].max()
-        # top_1_anomalie = relative_error[labels == 1].max()
+            _, data, labels = tools.read_file(path, filename)
 
-        # stop_epoch = 20 # trainer.early_stop_epoch
+            relative_error = evaluator.relative_reconstruction_error(
+                data, model, win_size)
 
-        result = {'filename': filename,
-                #   'rel_normal': rel_erruer_normal.item(),
-                #   'rel_abnormal': rel_erreur_anomalie.item(),
-                #   'top1_normal': top_1_normal.item(),
-                #   'top1_abnormal': top_1_anomalie.item(),
-                #   'stop_epoch': stop_epoch
-                  }
-        result.update(metrics)
-        results.append(result)
-        results_df = pd.DataFrame(results)
-        results_df.to_csv(
-            f'results/TimesNet/eval_{evaluator.strategy}.csv', index=False)
+            rel_erruer_normal = relative_error[labels == 0].mean()
+            rel_erreur_anomalie = relative_error[labels == 1].mean()
+            top_1_normal = relative_error[labels == 0].max()
+            top_1_anomalie = relative_error[labels == 1].max()
 
-    print(results_df.mean(numeric_only=True).round(3)*100)
+            # stop_epoch = 20 # trainer.early_stop_epoch
+
+            result = {'filename': filename,
+                    'rel_normal': rel_erruer_normal.item(),
+                    'rel_abnormal': rel_erreur_anomalie.item(),
+                    'top1_normal': top_1_normal.item(),
+                    'top1_abnormal': top_1_anomalie.item(),
+                    #   'stop_epoch': stop_epoch
+                    }
+            result.update(metrics)
+            results.append(result)
+            results_df = pd.DataFrame(results)
+            results_df.to_csv(
+                f'results/TimesNet/eval_hp_{seed}.csv', index=False)
+
+        print(results_df.mean(numeric_only=True).round(3)*100)
 
 
     # filename = file_list[300]
