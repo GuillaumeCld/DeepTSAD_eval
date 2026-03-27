@@ -112,7 +112,7 @@ def objective(trial):
     win_size = trial.suggest_categorical("win_size", [32, 64, 96])
     lr = trial.suggest_categorical("lr", [1e-4, 1e-3, 1e-2])
     epochs = trial.suggest_categorical("epochs", [10, 20, 30])
-
+    strategy = trial.suggest_categorical("strategy", ["overlapping", "disjoint"])
     # ----------------------
     # Model-specific params
     # ----------------------
@@ -214,10 +214,10 @@ def objective(trial):
         )
 
         evaluator = Evaluator(
-            batch_size=2048,
+            batch_size=10000,
             device=device,
             metrics='restr',
-            strategy='overlapping'
+            strategy=strategy
         )
 
         scores = []
@@ -258,9 +258,10 @@ def main():
 
     pruner = optuna.pruners.MedianPruner()
 
+    study_name = "DLinear_Tuning"  # unique identifier of the study
     study = optuna.create_study(
         direction="maximize",
-        study_name="TimesNet_big_tuning",
+        study_name=study,
         storage="sqlite:///optuna.db",   # persistent + parallel-safe
         load_if_exists=True,
         pruner=pruner,
@@ -268,13 +269,14 @@ def main():
             {
                 "win_size": [32, 64, 96],
                 "lr": [1e-4, 1e-3, 1e-2],
-                "epochs": [10, 20, 30],
-                "top_k": [3, 5, 7],
-                "d_model": [8, 16, 32],
-                "d_ff": [16, 32, 64],
-                "num_kernels": [4, 6, 8],
-                "e_layers": [1, 2, 3],
-                # "moving_avg_ratio": [0.1, 0.25, 0.5, 0.75],
+                "epochs": [10, 20, 30, 50],
+                # "top_k": [3, 5, 7],
+                # "d_model": [8, 16, 32],
+                # "d_ff": [16, 32, 64],
+                # "num_kernels": [4, 6, 8],
+                # "e_layers": [1, 2, 3],
+                "moving_avg_ratio": [0.1, 0.25, 0.5, 0.75],
+                "strategy": ["overlapping", "disjoint"],
             }
         )
     )
@@ -282,14 +284,14 @@ def main():
 
     study.optimize(
         objective,
-        n_jobs=1   # parallel
+        n_jobs=2   # parallel
     )
 
     print("Best model:", study.best_params["model"])
     print("Best params:", study.best_params)
     print("Best score:", study.best_value)
 
-    study.trials_dataframe().to_csv("results/optuna_results.csv", index=False)
+    study.trials_dataframe().to_csv(f"results/{study_name}.csv", index=False)
 
 
 if __name__ == "__main__":
