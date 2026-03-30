@@ -20,7 +20,7 @@ DATA_CACHE = {}
 
 MODEL_REGISTRY = {
     # "DLinear": DLinear.Model,
-    "TimesNet": TimesNet.Model,
+    "TimesNet": TimesNet.Model
 }
 
 
@@ -111,7 +111,7 @@ def objective(trial):
     # ----------------------
     win_size = trial.suggest_categorical("win_size", [32, 64, 96])
     lr = trial.suggest_categorical("lr", [1e-4, 1e-3, 1e-2])
-    epochs = trial.suggest_categorical("epochs", [10, 20, 30])
+    epochs = trial.suggest_categorical("epochs", [10, 20, 30, 50])
     strategy = trial.suggest_categorical("strategy", ["overlapping", "disjoint"])
     # ----------------------
     # Model-specific params
@@ -222,7 +222,7 @@ def objective(trial):
 
         scores = []
 
-        for filename in tqdm(file_list):
+        for filename in file_list:
 
             data = load_dataset(path, filename)
 
@@ -258,10 +258,10 @@ def main():
 
     pruner = optuna.pruners.MedianPruner()
 
-    study_name = "DLinear_Tuning"  # unique identifier of the study
+    study_name = "TimesNet_hp"  # unique identifier of the study
     study = optuna.create_study(
         direction="maximize",
-        study_name=study,
+        study_name=study_name,
         storage="sqlite:///optuna.db",   # persistent + parallel-safe
         load_if_exists=True,
         pruner=pruner,
@@ -270,12 +270,12 @@ def main():
                 "win_size": [32, 64, 96],
                 "lr": [1e-4, 1e-3, 1e-2],
                 "epochs": [10, 20, 30, 50],
-                # "top_k": [3, 5, 7],
-                # "d_model": [8, 16, 32],
-                # "d_ff": [16, 32, 64],
-                # "num_kernels": [4, 6, 8],
-                # "e_layers": [1, 2, 3],
-                "moving_avg_ratio": [0.1, 0.25, 0.5, 0.75],
+                "top_k": [3, 5, 7],
+                "d_model": [8, 16, 32],
+                "d_ff": [16, 32, 64],
+                "num_kernels": [4, 6, 8],
+                "e_layers": [1, 2, 3],
+                # "moving_avg_ratio": [0.1, 0.25, 0.5, 0.75],
                 "strategy": ["overlapping", "disjoint"],
             }
         )
