@@ -1,26 +1,322 @@
-import optuna
-import pandas as pd
-import numpy as np
-import torch
-import random
 import os
-
+import random
+import argparse
 from types import SimpleNamespace
 
-from models import DLinear, TimesNet, Transformer  # add other models here
-from training import Trainer
+import numpy as np
+import optuna
+import pandas as pd
+import torch
+
 from eval import Evaluator
-from procedure import train_and_evaluate
-from tqdm import tqdm
+from models import AutoEncoder, Autoformer, DLinear, FEDformer, TimesNet, Transformer
+from training import Trainer
 
 # ----------------------
 # Global cache
 # ----------------------
 DATA_CACHE = {}
+TUNING_FILE_LIST = pd.read_csv(
+    "Datasets/File_List/TSB-AD-U-Tuning.csv"
+)["file_name"].values
 
-MODEL_REGISTRY = {
-    # "DLinear": DLinear.Model,
-    "TimesNet": TimesNet.Model
+COMMON_SEARCH_SPACE = {
+    "win_size": [32, 64, 96],
+    "lr": [1e-4, 1e-3, 1e-2],
+    "strategy": ["overlapping", "disjoint"],
+    "architecture_size": ["small", "medium", "large"],
+    "lr_mode": ["constant", "scheduled"],
+}
+
+ARCHITECTURE_PRESETS = {
+    "TimesNet": {
+        "small": {
+            "top_k": 3,
+            "d_model": 8,
+            "d_ff": 16,
+            "num_kernels": 4,
+            "e_layers": 1,
+        },
+        "medium": {
+            "top_k": 5,
+            "d_model": 16,
+            "d_ff": 32,
+            "num_kernels": 6,
+            "e_layers": 2,
+        },
+        "large": {
+            "top_k": 7,
+            "d_model": 32,
+            "d_ff": 64,
+            "num_kernels": 8,
+            "e_layers": 3,
+        },
+    },
+    "DLinear": {
+        "small": {"moving_avg_ratio": 0.1},
+        "medium": {"moving_avg_ratio": 0.25},
+        "large": {"moving_avg_ratio": 0.5},
+    },
+    "Transformer": {
+        "small": {
+            "d_model": 8,
+            "d_ff": 16,
+            "e_layers": 1,
+            "n_heads": 2,
+        },
+        "medium": {
+            "d_model": 16,
+            "d_ff": 32,
+            "e_layers": 2,
+            "n_heads": 2,
+        },
+        "large": {
+            "d_model": 32,
+            "d_ff": 64,
+            "e_layers": 3,
+            "n_heads": 4,
+        },
+    },
+    "FEDformer": {
+        "small": {
+            "d_model": 8,
+            "d_ff": 16,
+            "e_layers": 1,
+            "n_heads": 2,
+            "moving_avg": 15,
+        },
+        "medium": {
+            "d_model": 16,
+            "d_ff": 32,
+            "e_layers": 1,
+            "n_heads": 2,
+            "moving_avg": 25,
+        },
+        "large": {
+            "d_model": 32,
+            "d_ff": 64,
+            "e_layers": 2,
+            "n_heads": 4,
+            "moving_avg": 25,
+        },
+    },
+    "Autoformer": {
+        "small": {
+            "d_model": 8,
+            "d_ff": 16,
+            "e_layers": 1,
+            "n_heads": 2,
+            "factor": 3,
+            "moving_avg": 15,
+        },
+        "medium": {
+            "d_model": 16,
+            "d_ff": 32,
+            "e_layers": 1,
+            "n_heads": 2,
+            "factor": 3,
+            "moving_avg": 25,
+        },
+        "large": {
+            "d_model": 32,
+            "d_ff": 64,
+            "e_layers": 2,
+            "n_heads": 4,
+            "factor": 5,
+            "moving_avg": 25,
+        },
+    },
+    "AutoEncoder": {
+        "small": {
+            "latent_ratio": 0.25,
+            "hidden_dims": [24],
+        },
+        "medium": {
+            "latent_ratio": 0.4,
+            "hidden_dims": [48, 24],
+        },
+        "large": {
+            "latent_ratio": 0.5,
+            "hidden_dims": [96, 48, 24],
+        },
+    },
+}
+
+
+# ----------------------
+# Model config builders
+# ----------------------
+def build_dlinear_config(params):
+    moving_avg = int(params["win_size"] * params["moving_avg_ratio"])
+    if moving_avg % 2 == 0:
+        moving_avg += 1
+
+    return SimpleNamespace(
+        task_name="anomaly_detection",
+        seq_len=params["win_size"],
+        label_len=params["win_size"],
+        moving_avg=moving_avg,
+        dropout=0.1,
+        enc_in=1,
+    )
+
+
+def build_timesnet_config(params):
+    return SimpleNamespace(
+        task_name="anomaly_detection",
+        seq_len=params["win_size"],
+        pred_len=0,
+        label_len=params["win_size"],
+        dropout=0.1,
+        enc_in=1,
+        c_out=1,
+        top_k=params["top_k"],
+        d_model=params["d_model"],
+        d_ff=params["d_ff"],
+        num_kernels=params["num_kernels"],
+        e_layers=params["e_layers"],
+        embed="timeF",
+        freq="t",
+    )
+
+
+def build_transformer_config(params):
+    return SimpleNamespace(
+        task_name="anomaly_detection",
+        seq_len=params["win_size"],
+        label_len=params["win_size"],
+        pred_len=0,
+        d_model=params["d_model"],
+        d_ff=params["d_ff"],
+        factor=3,
+        e_layers=params["e_layers"],
+        d_layers=1,
+        enc_in=1,
+        dec_in=1,
+        c_out=1,
+        n_heads=params["n_heads"],
+        activation="gelu",
+        moving_avg=25,
+        embed="fixed",
+        freq="t",
+        dropout=0.1,
+        down_sampling_window=3,
+        channel_independence=True,
+        decomp_method="moving_avg",
+        down_sampling_layers=2,
+        use_norm=False,
+        down_sampling_method="avg",
+    )
+
+
+def build_fedformer_config(params):
+    return SimpleNamespace(
+        task_name="anomaly_detection",
+        seq_len=params["win_size"],
+        label_len=params["win_size"],
+        pred_len=0,
+        d_model=params["d_model"],
+        d_ff=params["d_ff"],
+        e_layers=params["e_layers"],
+        d_layers=1,
+        enc_in=1,
+        dec_in=1,
+        c_out=1,
+        n_heads=params["n_heads"],
+        activation="gelu",
+        moving_avg=params["moving_avg"],
+        embed="fixed",
+        freq="t",
+        dropout=0.1,
+    )
+
+
+def build_autoformer_config(params):
+    return SimpleNamespace(
+        task_name="anomaly_detection",
+        seq_len=params["win_size"],
+        label_len=params["win_size"],
+        pred_len=0,
+        d_model=params["d_model"],
+        d_ff=params["d_ff"],
+        factor=params["factor"],
+        e_layers=params["e_layers"],
+        d_layers=1,
+        enc_in=1,
+        dec_in=1,
+        c_out=1,
+        n_heads=params["n_heads"],
+        activation="gelu",
+        moving_avg=params["moving_avg"],
+        embed="fixed",
+        freq="t",
+        dropout=0.1,
+    )
+
+
+def build_autoencoder_config(params):
+    latent_len = max(2, int(params["win_size"] * params["latent_ratio"]))
+
+    hidden_dims = [
+        min(max(2, int(width)), max(2, params["win_size"] - 1))
+        for width in params.get("hidden_dims", [])
+    ]
+
+    return SimpleNamespace(
+        task_name="anomaly_detection",
+        seq_len=params["win_size"],
+        enc_in=1,
+        latent_len=latent_len,
+        hidden_dims=hidden_dims,
+        activation="relu",
+    )
+
+
+MODEL_SPECS = {
+    "TimesNet": {
+        "model_class": TimesNet.Model,
+        "search_space": {},
+        "build_config": build_timesnet_config,
+    },
+    "DLinear": {
+        "model_class": DLinear.Model,
+        "search_space": {},
+        "build_config": build_dlinear_config,
+    },
+    "Transformer": {
+        "model_class": Transformer.Model,
+        "search_space": {},
+        "build_config": build_transformer_config,
+    },
+    "FEDformer": {
+        "model_class": FEDformer.Model,
+        "search_space": {},
+        "build_config": build_fedformer_config,
+    },
+    "Autoformer": {
+        "model_class": Autoformer.Model,
+        "search_space": {},
+        "build_config": build_autoformer_config,
+    },
+    "AutoEncoder": {
+        "model_class": AutoEncoder.Model,
+        "search_space": {},
+        "build_config": build_autoencoder_config,
+    },
+}
+
+TUNING_SETTINGS = {
+    "target_models": ["DLinear", "AutoEncoder", "TimesNet", "FEDformer", "Autoformer"],
+    "dataset_path": "Datasets/TSB-AD-U/",
+    "seeds": [0, 1, 2],
+    "max_epochs": 50,
+    "n_jobs": 1,
+    "scheduled_lr_scheduler": "plateau",
+    "scheduled_lr_scheduler_kwargs": {
+        "patience": 5,
+        "factor": 0.5,
+        "min_lr": 1e-5,
+    },
 }
 
 
@@ -52,15 +348,14 @@ def load_dataset(path, filename):
         df = pd.read_csv(file_path).dropna()
 
         data = df.iloc[:, 0:-1].values.astype(float)
-        labels = df['Label'].astype(int).to_numpy()
+        labels = df["Label"].astype(int).to_numpy()
 
-        # normalize
         mean = data.mean(axis=0)
         std = data.std(axis=0)
         std = np.where(std == 0, 1e-8, std)
         data = (data - mean) / std
 
-        train_index = int(filename.split('.')[0].split('_')[-3])
+        train_index = int(filename.split(".")[0].split("_")[-3])
 
         data_train = data[:train_index]
         data_test = data
@@ -70,228 +365,171 @@ def load_dataset(path, filename):
     return DATA_CACHE[key]
 
 
-def check_repeated_trial(trial):
-  optuna_study = trial.study
-  
+def merged_search_space(model_name):
+    return {
+        **COMMON_SEARCH_SPACE,
+        **MODEL_SPECS[model_name]["search_space"],
+    }
 
-  for past_trial in optuna_study.get_trials():
-    if past_trial.number == trial.number:
-      continue
 
-    past_params = past_trial.params
-    repeated_trial = True
-    
-    for key in trial.params:
-      if key in past_params and trial.params[key] != past_params[key]:
-        repeated_trial = False
-        break 
-    
-    return repeated_trial
-# ----------------------
-# Objective
-# ----------------------
-def objective(trial):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+def suggest_params(trial, search_space):
+    params = {}
+    for key, values in search_space.items():
+        params[key] = trial.suggest_categorical(key, values)
+    return params
 
-    # seeds for robustness
-    seeds = [0, 1, 2]
 
-    # ----------------------
-    # Model choice
-    # ----------------------
-    model_name = trial.suggest_categorical(
-        "model",
-        list(MODEL_REGISTRY.keys())
-    )
+def apply_architecture_preset(model_name, params):
+    size = params["architecture_size"]
+    presets = ARCHITECTURE_PRESETS.get(model_name, {})
+    if size not in presets:
+        raise ValueError(
+            f"Missing architecture preset for model '{model_name}' and size '{size}'"
+        )
+    return {
+        **params,
+        **presets[size],
+    }
 
-    ModelClass = MODEL_REGISTRY[model_name]
 
-    # ----------------------
-    # Shared hyperparameters
-    # ----------------------
-    win_size = trial.suggest_categorical("win_size", [32, 64, 96])
-    lr = trial.suggest_categorical("lr", [1e-4, 1e-3, 1e-2])
-    epochs = trial.suggest_categorical("epochs", [10, 20, 30, 50])
-    strategy = trial.suggest_categorical("strategy", ["overlapping", "disjoint"])
-    # ----------------------
-    # Model-specific params
-    # ----------------------
-    if model_name == "DLinear":
-        moving_avg_ratio = trial.suggest_categorical(
-            "moving_avg_ratio",
-            [0.1, 0.25, 0.5, 0.75]
+def scheduled_lr_kwargs(max_epochs, scheduler_name, base_kwargs=None):
+    del max_epochs
+    del scheduler_name
+    return dict(base_kwargs or {})
+
+
+def make_objective(model_name):
+    spec = MODEL_SPECS[model_name]
+    model_class = spec["model_class"]
+    build_config = spec["build_config"]
+    search_space = merged_search_space(model_name)
+
+    def objective(trial):
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        params = suggest_params(trial, search_space)
+        params = apply_architecture_preset(model_name, params)
+        config = build_config(params)
+
+        use_scheduler = params["lr_mode"] == "scheduled"
+        scheduler_name = (
+            TUNING_SETTINGS["scheduled_lr_scheduler"] if use_scheduler else "none"
+        )
+        scheduler_kwargs = (
+            scheduled_lr_kwargs(
+                TUNING_SETTINGS["max_epochs"],
+                scheduler_name,
+                TUNING_SETTINGS["scheduled_lr_scheduler_kwargs"],
+            ) if use_scheduler else {}
         )
 
-        moving_avg = int(win_size * moving_avg_ratio)
-        moving_avg = moving_avg + 1 if moving_avg % 2 == 0 else moving_avg
+        seed_scores = []
+        for seed in TUNING_SETTINGS["seeds"]:
+            set_seed(seed)
 
-        config = SimpleNamespace(
-            task_name='anomaly_detection',
-            seq_len=win_size,
-            label_len=win_size,
-            moving_avg=moving_avg,
-            dropout=0.1,
-            enc_in=1,
-        )
-    elif model_name == "TimesNet":
-        top_k = trial.suggest_categorical("top_k", [3, 5, 7])
-        d_model = trial.suggest_categorical("d_model", [8, 16, 32])
-        d_ff = trial.suggest_categorical("d_ff", [16, 32, 64])
-        num_kernels = trial.suggest_categorical("num_kernels", [4, 6, 8])
-        e_layers = trial.suggest_categorical("e_layers", [1, 2, 3])
-        config = SimpleNamespace(
-            task_name='anomaly_detection',
-            seq_len=win_size,
-            pred_len=0,
-            label_len=win_size,
-            dropout=0.1,
-            enc_in=1,
-            c_out=1,
-            top_k=top_k,
-            d_model=d_model,
-            d_ff=d_ff,
-            num_kernels=num_kernels,
-            e_layers=e_layers,
-            embed="timeF",
-            freq="t",
-        )
-    elif model_name == "Transformer":
-       
-        config = SimpleNamespace(
-            task_name='anomaly_detection',
-            seq_len=win_size,
-            label_len=win_size,  # unused
-            pred_len=0,   # no forecasting for reconstruction
-            d_model=8,
-            d_ff=16,   
-            factor=3,    
-            e_layers=1,    # number of TimesNet blocks     
-            d_layers=1,
-            enc_in=1,      # univariate input
-            dec_in=1,      # univariate input
-            c_out=1,       # univariate output 
-            n_heads=2,
-            activation='gelu',
-            moving_avg=25,
-            embed="fixed",  
-            freq='t',       
-            dropout=0.1,   # dropout rate
-            down_sampling_window=3,
-            channel_independence=True,
-            decomp_method='moving_avg',
-            down_sampling_layers=2,
-            use_norm=False,
-            down_sampling_method="avg"
-        )
-    
-    else:
-        raise NotImplementedError(model_name)
-
-    if check_repeated_trial(trial):
-        print(f"Trial {trial.number} is a repeated trial. Skipping...")
-        raise optuna.exceptions.TrialPruned()
-
-    # dataset
-    path = 'Datasets/TSB-AD-U/'
-    file_list = pd.read_csv(
-        'Datasets/File_List/TSB-AD-U-Tuning.csv'
-    )['file_name'].values
-
-    seed_scores = []
-
-    # ======================
-    # LOOP OVER SEEDS
-    # ======================
-    for seed in seeds:
-        set_seed(seed)
-
-        trainer = Trainer(
-            batch_size=1024,
-            lr=lr,
-            device=device,
-            win_size=win_size,
-            validation_size=0.2
-        )
-
-        evaluator = Evaluator(
-            batch_size=10000,
-            device=device,
-            metrics='restr',
-            strategy=strategy
-        )
-
-        scores = []
-
-        for filename in file_list:
-
-            data = load_dataset(path, filename)
-
-            model = ModelClass(config).to(device)
-
-            metrics = train_and_evaluate(
-                path,
-                filename,
-                model,
-                trainer,
-                evaluator,
-                win_size=win_size,
-                epochs=epochs,
-                data=data
+            trainer = Trainer(
+                batch_size=1024,
+                lr=params["lr"],
+                device=device,
+                win_size=params["win_size"],
+                validation_size=0.2,
+                lr_scheduler=scheduler_name,
+                lr_scheduler_kwargs=scheduler_kwargs,
             )
 
-            score = metrics.get("AUC-PR", None) or list(metrics.values())[0]
-            score = np.round(score, 3)
-            scores.append(score)
+            evaluator = Evaluator(
+                batch_size=10000,
+                device=device,
+                metrics="restr",
+                strategy=params["strategy"],
+            )
 
-        # average over datasets for this seed
-        seed_scores.append(np.mean(scores))
+            scores = []
+            for filename in TUNING_FILE_LIST:
+                data_train, data_test, labels = load_dataset(
+                    TUNING_SETTINGS["dataset_path"],
+                    filename,
+                )
 
-    # ======================
-    # FINAL AVERAGE OVER SEEDS
-    # ======================
-    final_score = float(np.mean(seed_scores))
+                model = model_class(config).to(device)
+                trainer.train(model, data_train, TUNING_SETTINGS["max_epochs"])
 
-    return np.round(final_score, 3)
-def main():
+                metrics = evaluator.evaluate(
+                    data_test,
+                    labels,
+                    model,
+                    params["win_size"],
+                    stride=1,
+                )
 
-    os.makedirs("results", exist_ok=True)
+                score = metrics.get("AUC-PR", None) or list(metrics.values())[0]
+                scores.append(score)
 
-    pruner = optuna.pruners.MedianPruner()
+            seed_scores.append(float(np.mean(scores)))
 
-    study_name = "TimesNet_hp"  # unique identifier of the study
+        final_score = np.round(float(np.mean(seed_scores)), 2)
+        trial.set_user_attr("model", model_name)
+        trial.set_user_attr("architecture_size", params["architecture_size"])
+        trial.set_user_attr("lr_mode", params["lr_mode"])
+        trial.set_user_attr("lr_scheduler", scheduler_name)
+        trial.set_user_attr("trained_epochs", int(TUNING_SETTINGS["max_epochs"]))
+        return float(final_score)
+
+    return objective
+
+
+def run_model_study(model_name):
+    search_space = merged_search_space(model_name)
+    study_name = f"HP_{model_name}"
+
     study = optuna.create_study(
         direction="maximize",
         study_name=study_name,
-        storage="sqlite:///optuna.db",   # persistent + parallel-safe
+        storage="sqlite:///optuna.db",
         load_if_exists=True,
-        pruner=pruner,
-        sampler=optuna.samplers.GridSampler(
-            {
-                "win_size": [32, 64, 96],
-                "lr": [1e-4, 1e-3, 1e-2],
-                "epochs": [10, 20, 30, 50],
-                "top_k": [3, 5, 7],
-                "d_model": [8, 16, 32],
-                "d_ff": [16, 32, 64],
-                "num_kernels": [4, 6, 8],
-                "e_layers": [1, 2, 3],
-                # "moving_avg_ratio": [0.1, 0.25, 0.5, 0.75],
-                "strategy": ["overlapping", "disjoint"],
-            }
-        )
+        pruner=optuna.pruners.MedianPruner(),
+        sampler=optuna.samplers.GridSampler(search_space),
     )
-
 
     study.optimize(
-        objective,
-        n_jobs=2   # parallel
+        make_objective(model_name),
+        n_jobs=TUNING_SETTINGS["n_jobs"],
     )
 
-    print("Best model:", study.best_params["model"])
-    print("Best params:", study.best_params)
-    print("Best score:", study.best_value)
+    print(f"[{model_name}] Best params:", study.best_params)
+    print(f"[{model_name}] Best score:", study.best_value)
 
+    os.makedirs("results", exist_ok=True)
     study.trials_dataframe().to_csv(f"results/{study_name}.csv", index=False)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run hyperparameter tuning for selected models.")
+    parser.add_argument(
+        "--target-models",
+        nargs="+",
+        default=TUNING_SETTINGS["target_models"],
+        help="Models to tune. Example: --target-models AutoEncoder TimesNet",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    target_models = args.target_models
+
+    unknown_models = [
+        model_name
+        for model_name in target_models
+        if model_name not in MODEL_SPECS
+    ]
+    if unknown_models:
+        raise ValueError(
+            f"Unknown models in target_models: {unknown_models}. "
+            f"Available models: {list(MODEL_SPECS.keys())}"
+        )
+
+    for model_name in target_models:
+        run_model_study(model_name)
 
 
 if __name__ == "__main__":

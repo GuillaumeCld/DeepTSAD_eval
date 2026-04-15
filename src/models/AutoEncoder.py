@@ -3,6 +3,23 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def _build_mlp(input_dim, hidden_dims, output_dim, activation):
+    dims = [input_dim] + list(hidden_dims) + [output_dim]
+    layers = []
+    if activation == "relu":
+        act_layer = nn.ReLU
+    elif activation == "gelu":
+        act_layer = nn.GELU
+    else:
+        raise ValueError(f"Unknown activation '{activation}'. Use 'relu' or 'gelu'.")
+
+    for i in range(len(dims) - 1):
+        layers.append(nn.Linear(dims[i], dims[i + 1]))
+        if i < len(dims) - 2:
+            layers.append(act_layer())
+    return nn.Sequential(*layers)
+
+
 class Model(nn.Module):
     """
     Simple linear autoencoder for sequences.
@@ -20,6 +37,9 @@ class Model(nn.Module):
         self.channels = configs.enc_in
         # Latent compressed length along the time dimension
         self.latent_len = getattr(configs, "latent_len", self.seq_len // 2)
+        # Hidden layers on the time axis (seq_len -> ... -> latent_len)
+        self.hidden_dims = list(getattr(configs, "hidden_dims", []))
+        self.activation = getattr(configs, "activation", "relu")
         self.individual = individual
 
         if self.individual:
@@ -28,15 +48,12 @@ class Model(nn.Module):
             self.Dec = nn.ModuleList()
 
             for i in range(self.channels):
-                enc = nn.Linear(self.seq_len, self.latent_len)
-                dec = nn.Linear(self.latent_len, self.seq_len)
-
-                # Init similar style as your template (averaging weights)
-                enc.weight = nn.Parameter(
-                    (1 / self.seq_len) * torch.ones(self.latent_len, self.seq_len)
-                )
-                dec.weight = nn.Parameter(
-                    (1 / self.latent_len) * torch.ones(self.seq_len, self.latent_len)
+                enc = _build_mlp(self.seq_len, self.hidden_dims, self.latent_len, self.activation)
+                dec = _build_mlp(
+                    self.latent_len,
+                    list(reversed(self.hidden_dims)),
+                    self.seq_len,
+                    self.activation,
                 )
 
                 self.Enc.append(enc)
@@ -44,14 +61,12 @@ class Model(nn.Module):
 
         else:
             # Shared encoder/decoder for all channels
-            self.Enc = nn.Linear(self.seq_len, self.latent_len)
-            self.Dec = nn.Linear(self.latent_len, self.seq_len)
-
-            self.Enc.weight = nn.Parameter(
-                (1 / self.seq_len) * torch.ones(self.latent_len, self.seq_len)
-            )
-            self.Dec.weight = nn.Parameter(
-                (1 / self.latent_len) * torch.ones(self.seq_len, self.latent_len)
+            self.Enc = _build_mlp(self.seq_len, self.hidden_dims, self.latent_len, self.activation)
+            self.Dec = _build_mlp(
+                self.latent_len,
+                list(reversed(self.hidden_dims)),
+                self.seq_len,
+                self.activation,
             )
 
     def encode(self, x):

@@ -12,160 +12,6 @@ def MARE(preds, target):
     return (preds - target).abs().mean() / (target.abs().mean() + 1e-8)
 
 
-# class WindowMPDataset(torch.utils.data.Dataset):
-#     def __init__(
-#         self,
-#         data,
-#         window_size,
-#         stride=1,
-#         normalize=True,
-#         add_last_partial=False,
-#     ):
-#         super().__init__()
-
-#         self.window_size = window_size
-#         self.stride = stride
-#         self.add_last_partial = add_last_partial
-
-#         # Normalize (before MP computation)
-#         self.data = self._normalize_data(data) if normalize else data
-#         self.univariate = self.data.shape[1] == 1
-
-#         # Matrix profile must be computed on 1D series
-#         if not self.univariate:
-#             raise ValueError("Matrix profile requires univariate input (shape: [N, 1])")
-
-#         ts_1d = self.data.squeeze()
-
-#         # Compute matrix profile
-#         mp = stumpy.gpu_stump(ts_1d, window_size)
-#         self.matrix_profile = mp[:, 0].astype(np.float32)
-
-#         # Compute number of sliding windows
-#         self.sample_num = max(
-#             0, (len(ts_1d) - window_size) // stride + 1
-#         )
-
-#         self.samples, self.targets = self._generate_samples(ts_1d)
-
-#     def _normalize_data(self, data, epsilon=1e-8):
-#         mean = np.mean(data, axis=0)
-#         std = np.std(data, axis=0)
-#         std = np.where(std == 0, epsilon, std)
-#         return (data - mean) / std
-
-#     def _generate_samples(self, ts_1d):
-#         data = torch.tensor(ts_1d, dtype=torch.float32)
-
-#         # Generate sliding windows
-#         X = torch.stack([
-#             data[i * self.stride: i * self.stride + self.window_size]
-#             for i in range(self.sample_num)
-#         ])
-
-#         # Targets aligned with window start indices
-#         y = torch.tensor(
-#             self.matrix_profile[::self.stride][:self.sample_num],
-#             dtype=torch.float32
-#         )
-
-#         # Optional last partial window
-#         if self.add_last_partial and self.stride > 1:
-#             X = torch.cat([X, data[-self.window_size:].unsqueeze(0)], dim=0)
-#             y = torch.cat([y, torch.tensor([self.matrix_profile[-1]], dtype=torch.float32)])
-#             self.sample_num += 1
-
-#         # Add feature dimension (N, W, 1)
-#         X = X.unsqueeze(-1)
-
-#         return X, y
-
-#     def __len__(self):
-#         return self.sample_num
-
-#     def __getitem__(self, index):
-#         return self.samples[index], self.targets[index]
-
-
-class WarmupPlateauEscapeLR:
-    """
-    Warmup + plateau escape + long-term decay LR scheduler.
-    Call `step(metric)` once per epoch.
-    """
-
-    def __init__(
-        self,
-        optimizer,
-        base_lr,
-        warmup_epochs=10,
-        plateau_patience=8,
-        factor_up=1.3,
-        decay_rate=0.995,
-        min_lr=1e-6,
-        max_lr=3e-3,
-        improvement_threshold=0.995,
-        cooldown_epochs=5,
-    ):
-        self.optimizer = optimizer
-        self.base_lr = base_lr
-        self.warmup_epochs = warmup_epochs
-        self.plateau_patience = plateau_patience
-        self.factor_up = factor_up
-        self.decay_rate = decay_rate
-        self.min_lr = min_lr
-        self.max_lr = max_lr
-        self.improvement_threshold = improvement_threshold
-        self.cooldown_epochs = cooldown_epochs
-
-        self.best_metric = float("inf")
-        self.bad_epochs = 0
-        self.cooldown = 0
-        self.epoch = 0
-
-        # Start at tiny LR
-        self._set_lr(min_lr)
-
-    def _set_lr(self, lr):
-        for g in self.optimizer.param_groups:
-            g["lr"] = lr
-
-    def get_lr(self):
-        return self.optimizer.param_groups[0]["lr"]
-
-    def step(self, metric):
-        self.epoch += 1
-        lr = self.get_lr()
-
-        # ---------- WARMUP ----------
-        if self.epoch <= self.warmup_epochs:
-            lr = self.base_lr * self.epoch / self.warmup_epochs
-            self._set_lr(lr)
-            return lr
-
-        # ---------- PLATEAU DETECTION ----------
-        improved = metric < self.best_metric * self.improvement_threshold
-
-        if improved:
-            self.best_metric = metric
-            self.bad_epochs = 0
-        else:
-            self.bad_epochs += 1
-
-        # ---------- ESCAPE ----------
-        if self.bad_epochs >= self.plateau_patience and self.cooldown == 0:
-            lr = min(lr * self.factor_up, self.max_lr)
-            self.bad_epochs = 0
-            self.cooldown = self.cooldown_epochs
-        else:
-            # ---------- DECAY ----------
-            lr = max(lr * self.decay_rate, self.min_lr)
-
-        if self.cooldown > 0:
-            self.cooldown -= 1
-
-        self._set_lr(lr)
-        return lr
-
 
 class Trainer:
     """
@@ -175,19 +21,61 @@ class Trainer:
       forward(x): [B, L, D] -> [B, L, D] (reconstruction)
     """
 
-    def __init__(self, batch_size=32, lr=1e-3, device='cpu', win_size=100, validation_size=0.1):
+    def __init__(
+        self,
+        batch_size=32,
+        lr=1e-3,
+        device='cpu',
+        win_size=100,
+        validation_size=0.1,
+        lr_scheduler="none",
+        lr_scheduler_kwargs=None,
+    ):
         # Config
         self.batch_size = batch_size
         self.lr = lr
         self.device = device
         self.win_size = win_size
         self.validation_size = validation_size
+        self.lr_scheduler = lr_scheduler
+        self.lr_scheduler_kwargs = lr_scheduler_kwargs or {}
 
         # losses / optimizer factory
         self.criterion = nn.MSELoss()
         self.optimizer_fn = optim.Adam
         self.mask_value = 0.0
         self.train_losses = []
+
+    def _build_scheduler(self, optimizer, total_epochs):
+        if self.lr_scheduler in (None, "none"):
+            return None
+
+        if self.lr_scheduler == "step":
+            step_size = self.lr_scheduler_kwargs.get(
+                "step_size", max(1, total_epochs // 10))
+            gamma = self.lr_scheduler_kwargs.get("gamma", 0.5)
+            return optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=step_size,
+                gamma=gamma,
+            )
+
+        if self.lr_scheduler == "plateau":
+            factor = self.lr_scheduler_kwargs.get("factor", 0.5)
+            patience = self.lr_scheduler_kwargs.get("patience", 30)
+            min_lr = self.lr_scheduler_kwargs.get("min_lr", 1e-5)
+            return optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='min',
+                factor=factor,
+                patience=patience,
+                min_lr=min_lr,
+            )
+
+        raise ValueError(
+            f"Unknown lr_scheduler '{self.lr_scheduler}'. "
+            "Use one of: 'none', 'step', 'plateau'."
+        )
 
     def _split(self, data):
         cut = int((1.0 - self.validation_size) * len(data))
@@ -198,52 +86,24 @@ class Trainer:
                                 stride=1, normalize=False)
         return DataLoader(ds, batch_size=self.batch_size, shuffle=shuffle)
 
-    def _loader_hybrid(self, ts, win_size, shuffle=False):
-        ds = WindowMPDataset(ts, window_size=win_size)
-        return DataLoader(
-            ds,
-            batch_size=self.batch_size,
-            shuffle=shuffle
-        )
-
-    def train(self, model, data, epochs, patience=20):
-        model = model.to(self.device)
-
-        self.train_losses = []
-        self.train_relative_losses = []
-        self.val_losses = []
-        self.val_relative_losses = []
-        self.lrs = []
-
-        # Initialize early stopping variables
-        self.early_stop_epoch = epochs  # Default to max epochs if no early stop occurs
-        epochs_no_improve = 0
-
-        optimizer = self.optimizer_fn(model.parameters(), lr=self.lr)
-        data_train, data_val = self._split(data)
-
-        train_loader = self._loader(
-            data_train, win_size=self.win_size, shuffle=True)
-        val_loader = self._loader(
-            data_val, win_size=self.win_size, shuffle=False)
-
-        best_val_loss = float("inf")
-        best_params = None
-
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=30, min_lr=1e-5)
-
-        for epoch in range(epochs):
+    def _fit_epochs(
+        self,
+        model,
+        train_loader,
+        val_loader,
+        optimizer,
+        epochs,
+        scheduler=None,
+    ):
+        for _ in range(epochs):
             model.train()
             epoch_train_loss = 0.0
-            epoch_train_relative_loss = 0.0
             for batch in train_loader:
                 inputs = batch.to(self.device)
                 optimizer.zero_grad()
                 outputs = model(inputs)
 
                 loss = self.criterion(outputs, inputs)
-                # relative_loss = MARE(outputs, inputs)
                 loss.backward()
                 optimizer.step()
 
@@ -254,7 +114,6 @@ class Trainer:
             # avg_train_relative_loss = epoch_train_relative_loss / len(train_loader)
             self.train_losses.append(avg_train_loss)
             # self.train_relative_losses.append(avg_train_relative_loss)
-            # scheduler.step(avg_train_loss)
 
             model.eval()
             epoch_val_loss = 0.0
@@ -272,7 +131,84 @@ class Trainer:
             # avg_val_relative_loss = epoch_val_relative_loss / len(val_loader)
             self.val_losses.append(avg_val_loss)
             # self.val_relative_losses.append(avg_val_relative_loss)
+
+            if scheduler is not None:
+                if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                    scheduler.step(avg_val_loss)
+                else:
+                    scheduler.step()
+
             self.lrs.append(optimizer.param_groups[0]['lr'])
+
+    def train_with_checkpoints(self, model, data, checkpoint_epochs):
+        model = model.to(self.device)
+
+        self.train_losses = []
+        self.train_relative_losses = []
+        self.val_losses = []
+        self.val_relative_losses = []
+        self.lrs = []
+
+        optimizer = self.optimizer_fn(model.parameters(), lr=self.lr)
+        scheduler = self._build_scheduler(
+            optimizer, total_epochs=max(checkpoint_epochs))
+        data_train, data_val = self._split(data)
+
+        train_loader = self._loader(
+            data_train, win_size=self.win_size, shuffle=True)
+        val_loader = self._loader(
+            data_val, win_size=self.win_size, shuffle=False)
+
+        previous_epoch = 0
+        for checkpoint_epoch in checkpoint_epochs:
+            delta_epochs = checkpoint_epoch - previous_epoch
+            if delta_epochs <= 0:
+                continue
+            self._fit_epochs(
+                model,
+                train_loader,
+                val_loader,
+                optimizer,
+                delta_epochs,
+                scheduler=scheduler,
+            )
+            previous_epoch = checkpoint_epoch
+
+            # Yield current checkpoint to let caller run evaluation.
+            yield checkpoint_epoch
+
+    def train(self, model, data, epochs, patience=20):
+        model = model.to(self.device)
+
+        self.train_losses = []
+        self.train_relative_losses = []
+        self.val_losses = []
+        self.val_relative_losses = []
+        self.lrs = []
+
+        # Initialize early stopping variables
+        self.early_stop_epoch = epochs  # Default to max epochs if no early stop occurs
+
+        optimizer = self.optimizer_fn(model.parameters(), lr=self.lr)
+        scheduler = self._build_scheduler(optimizer, total_epochs=epochs)
+        data_train, data_val = self._split(data)
+
+        train_loader = self._loader(
+            data_train, win_size=self.win_size, shuffle=True)
+        val_loader = self._loader(
+            data_val, win_size=self.win_size, shuffle=False)
+
+        best_val_loss = float("inf")
+        best_params = None
+
+        self._fit_epochs(
+            model,
+            train_loader,
+            val_loader,
+            optimizer,
+            epochs,
+            scheduler=scheduler,
+        )
 
             # --- Early Stopping Logic ---
             # Using your 0.5% improvement threshold
@@ -329,40 +265,7 @@ class Trainer:
                 optimizer.step()
                 scheduler.step()
 
-    def train_hybrid(self, model, data, epochs):
-        model = model.to(self.device)
-        model.train()
 
-        optimizer = self.optimizer_fn(model.parameters(), lr=self.lr)
-        self.criterion = nn.MSELoss(reduction="none")
-        data_train, data_val = self._split(data)
-
-        train_loader = self._loader_hybrid(
-            data_train, win_size=self.win_size, shuffle=True
-        )
-
-        scheduler = optim.lr_scheduler.StepLR(
-            optimizer, step_size=max(1, epochs // 10), gamma=0.5
-        )
-        eps = 1e-8  # small constant to avoid div by zero
-        for _ in range(epochs):
-            for inputs, mp_coeff in train_loader:
-                inputs = inputs.to(self.device)
-                mp_coeff = torch.log(mp_coeff.to(self.device) + 1e-8)  # log-transform MP coefficients for better scaling
-                weights = 1.0 / (mp_coeff + eps)
-                outputs = model(inputs)
-
-            # per-sample reconstruction loss
-            loss_per_elem = self.criterion(outputs, inputs)
-            loss_per_sample = loss_per_elem.mean(dim=1)
-
-            # weight by matrix profile coefficient
-            weighted_loss = (loss_per_sample * weights).mean()
-
-            
-            optimizer.zero_grad()
-            weighted_loss.backward()
-            optimizer.step()
     # -------------------------
     # Mask builder
     # -------------------------

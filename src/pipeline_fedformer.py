@@ -87,7 +87,6 @@ def main():
         c_out=1,       # univariate output 
         n_heads=2,
         activation='gelu',
-        moving_avg=25,
         embed="fixed",  
         freq='t',       
         dropout=0.1,   # dropout rate

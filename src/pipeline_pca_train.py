@@ -4,7 +4,7 @@ import models
 import pandas as pd
 import os
 from types import SimpleNamespace
-
+import inference
 from models import TimesNet
 from tqdm import tqdm
 
@@ -61,10 +61,10 @@ def main():
             sequences_train = (sequences_train - train_mean) / train_std
 
             # ----- SVD -----
-            U, S, Vt = np.linalg.svd(sequences_train, full_matrices=False)
+            _, S, Vt = np.linalg.svd(sequences_train, full_matrices=False)
 
             # keep components
-            num_components = np.searchsorted(np.cumsum(S**2) / np.sum(S**2), 0.5) + 1
+            num_components = np.searchsorted(np.cumsum(S**2) / np.sum(S**2), 0.75) + 1
             V_k = Vt[:num_components]
 
             # ----- FULL DATA WINDOWS -----
@@ -117,12 +117,18 @@ def main():
             ) if anomalous_relative_frobenius_norm > 0 else np.nan
 
             # ----- ANOMALY SCORE -----
-            score = np.linalg.norm(sequences - reconstructed, axis=1)
-
-
+            # score = np.linalg.norm(sequences - reconstructed, axis=1)
+            errors = (sequences - reconstructed) ** 2
+            # score = inference.combined_pointwise_profile(errors, len(data), window_length)
+            score = inference.disjoint_pointwise_profile(errors, len(data), window_length)
+            # score
+            # import matplotlib.pyplot as plt
+            # plt.plot(score)
+            # plt.scatter(np.where(labels == 1)[0], score[labels == 1], color='red', label='Anomalies')
+            # plt.show()
             metrics = evaluator.metrics_fnc(
                 score,
-                label_windows,
+                labels,
                 slidingWindow=rank
             )
 
@@ -143,7 +149,7 @@ def main():
         all_results.append(results_df)
 
         combined_df = pd.concat(all_results, ignore_index=True)
-        combined_df.to_csv(f'results/PCA/auto_75_{seed}.csv', index=False)
+        combined_df.to_csv(f'results/PCA/96_75_disjoint_{seed}.csv', index=False)
 
         print(combined_df.mean(numeric_only=True).round(4))
 

@@ -26,7 +26,20 @@ def main():
     file_list = os.listdir(path)
     file_list = [f for f in file_list if f.endswith('.txt')]
 
-    win_size = 32
+    win_size = 64
+    
+    moving_avg = int(win_size * 0.1)
+    moving_avg = moving_avg + 1 if moving_avg % 2 == 0 else moving_avg
+    config = SimpleNamespace(
+        task_name='anomaly_detection',
+        seq_len=win_size,
+        label_len=win_size,
+        moving_avg=moving_avg,
+        dropout=0.1,
+        enc_in=1,
+        )
+    
+
 
     # config = SimpleNamespace(
     #     task_name='anomaly_detection',
@@ -162,32 +175,32 @@ def main():
     # )
 
     # transformer
-    # config = SimpleNamespace(
-    #     task_name='anomaly_detection',
-    #     seq_len=win_size,
-    #     label_len=win_size,  # unused
-    #     pred_len=0,   # no forecasting for reconstruction
-    #     d_model=8,
-    #     d_ff=16,
-    #     factor=3,
-    #     e_layers=1,    # number of TimesNet blocks
-    #     d_layers=1,
-    #     enc_in=1,      # univariate input
-    #     dec_in=1,      # univariate input
-    #     c_out=1,       # univariate output
-    #     n_heads=2,
-    #     activation='gelu',
-    #     moving_avg=25,
-    #     embed="fixed",
-    #     freq='t',
-    #     dropout=0.1,   # dropout rate
-    #     down_sampling_window=3,
-    #     channel_independence=True,
-    #     decomp_method='moving_avg',
-    #     down_sampling_layers=2,
-    #     use_norm=False,
-    #     down_sampling_method="avg"
-    # )
+    config = SimpleNamespace(
+        task_name='anomaly_detection',
+        seq_len=win_size,
+        label_len=win_size,  # unused
+        pred_len=0,   # no forecasting for reconstruction
+        d_model=16,
+        d_ff=32,
+        factor=3,
+        e_layers=3,    # number of TimesNet blocks
+        d_layers=2,
+        enc_in=1,      # univariate input
+        dec_in=1,      # univariate input
+        c_out=1,       # univariate output
+        n_heads=8,
+        activation='gelu',
+        moving_avg=25,
+        embed="fixed",
+        freq='t',
+        dropout=0.1,   # dropout rate
+        down_sampling_window=3,
+        channel_independence=True,
+        decomp_method='moving_avg',
+        down_sampling_layers=2,
+        use_norm=False,
+        down_sampling_method="avg"
+    )
 
     # timemixer
     # config = SimpleNamespace(
@@ -220,13 +233,13 @@ def main():
 
     trainer = Trainer(
         batch_size=1024,
-        lr=1e-2,
+        lr=1e-3,
         device='cuda',
         win_size=win_size,
         validation_size=0.2
     )
     strategies = ['overlapping']
-    for seed in range(0, 5, 1):
+    for seed in range(3, 8, 1):
         torch.manual_seed(seed)
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
@@ -250,8 +263,8 @@ def main():
             start -= split
             end -= split
 
-            model = Linear.Model(config)
-            trainer.train_low_freq(model, train_data, 20)
+            model = Transformer.Model(config)
+            trainer.train(model, train_data, 20)
 
             for strat in strategies:
                 evaluator = Evaluator(batch_size=1024, device='cuda',
@@ -270,7 +283,7 @@ def main():
 
                 results_df = pd.DataFrame(results[strat])
                 results_df.to_csv(
-                    f'results/Linear/LF_ucr_{win_size}_{strat}_{seed}_128.csv', index=False)
+                    f'results/Transformer/hp_ucr_{win_size}_{strat}_{seed}.csv', index=False)
 
         for strat in strategies:
             print(

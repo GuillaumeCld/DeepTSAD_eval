@@ -13,3 +13,4 @@ dependencies:
   - statsmodels
   - scikit-learn
   - numba
+  - reformer-pytorch
