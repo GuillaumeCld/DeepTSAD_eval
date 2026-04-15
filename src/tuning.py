@@ -1,6 +1,7 @@
 import os
 import random
 import argparse
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -406,6 +407,7 @@ def make_objective(model_name):
 
     def objective(trial):
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        trial_start_time = time.perf_counter()
         params = suggest_params(trial, search_space)
         params = apply_architecture_preset(model_name, params)
         config = build_config(params)
@@ -472,6 +474,10 @@ def make_objective(model_name):
         trial.set_user_attr("lr_mode", params["lr_mode"])
         trial.set_user_attr("lr_scheduler", scheduler_name)
         trial.set_user_attr("trained_epochs", int(TUNING_SETTINGS["max_epochs"]))
+        trial.set_user_attr(
+            "computation_time_seconds",
+            float(time.perf_counter() - trial_start_time),
+        )
         return float(final_score)
 
     return objective
