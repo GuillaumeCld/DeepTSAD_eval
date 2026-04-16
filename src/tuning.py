@@ -516,12 +516,18 @@ def parse_args():
         default=TUNING_SETTINGS["target_models"],
         help="Models to tune. Example: --target-models AutoEncoder TimesNet",
     )
+    parser.add_argument(
+        "--dataset-path",
+        default=TUNING_SETTINGS["dataset_path"],
+        help="Path to dataset directory used during tuning.",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     target_models = args.target_models
+    TUNING_SETTINGS["dataset_path"] = args.dataset_path
 
     unknown_models = [
         model_name
