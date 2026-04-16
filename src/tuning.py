@@ -1,3 +1,10 @@
+"""Usage:
+python src/tuning.py
+python src/tuning.py --target-models AutoEncoder TimesNet
+python src/tuning.py --dataset-path Datasets/TSB-AD-M/
+python src/tuning.py --target-models DLinear --dataset-path Datasets/TSB-AD-U/
+"""
+
 import os
 import random
 import argparse
