@@ -317,7 +317,7 @@ TUNING_SETTINGS = {
     "target_models": ["DLinear", "AutoEncoder", "TimesNet", "FEDformer", "Autoformer"],
     "dataset_path": "Datasets/TSB-AD-U/",
     "seeds": [0, 1, 2],
-    "max_epochs": 50,
+    "epoch_candidates": [10, 20, 30, 50],
     "n_jobs": 1,
     "scheduled_lr_scheduler": "plateau",
     "scheduled_lr_scheduler_kwargs": {
@@ -418,6 +418,7 @@ def make_objective(model_name):
         params = suggest_params(trial, search_space)
         params = apply_architecture_preset(model_name, params)
         config = build_config(params)
+        epoch_candidates = TUNING_SETTINGS["epoch_candidates"]
 
         use_scheduler = params["lr_mode"] == "scheduled"
         scheduler_name = (
@@ -425,13 +426,13 @@ def make_objective(model_name):
         )
         scheduler_kwargs = (
             scheduled_lr_kwargs(
-                TUNING_SETTINGS["max_epochs"],
+                max(epoch_candidates),
                 scheduler_name,
                 TUNING_SETTINGS["scheduled_lr_scheduler_kwargs"],
             ) if use_scheduler else {}
         )
 
-        seed_scores = []
+        epoch_seed_scores = {epoch: [] for epoch in epoch_candidates}
         for seed in TUNING_SETTINGS["seeds"]:
             set_seed(seed)
 
@@ -452,35 +453,47 @@ def make_objective(model_name):
                 strategy=params["strategy"],
             )
 
-            scores = []
+            seed_epoch_scores = {epoch: [] for epoch in epoch_candidates}
             for filename in TUNING_FILE_LIST:
                 data_train, data_test, labels = load_dataset(
                     TUNING_SETTINGS["dataset_path"],
                     filename,
                 )
-
                 model = model_class(config).to(device)
-                trainer.train(model, data_train, TUNING_SETTINGS["max_epochs"])
+                previous_epoch = 0
+                for epochs in epoch_candidates:
+                    epochs_to_train = epochs - previous_epoch
+                    trainer.train(model, data_train, epochs_to_train)
+                    previous_epoch = epochs
 
-                metrics = evaluator.evaluate(
-                    data_test,
-                    labels,
-                    model,
-                    params["win_size"],
-                    stride=1,
-                )
+                    metrics = evaluator.evaluate(
+                        data_test,
+                        labels,
+                        model,
+                        params["win_size"],
+                        stride=1,
+                    )
 
-                score = metrics.get("AUC-PR", None) or list(metrics.values())[0]
-                scores.append(score)
+                    score = metrics.get("AUC-PR", None) or list(metrics.values())[0]
+                    seed_epoch_scores[epochs].append(score)
 
-            seed_scores.append(float(np.mean(scores)))
+            for epoch in epoch_candidates:
+                epoch_seed_scores[epoch].append(float(np.mean(seed_epoch_scores[epoch])))
+
+        epoch_mean_scores = {
+            epoch: float(np.mean(scores))
+            for epoch, scores in epoch_seed_scores.items()
+        }
+        best_epoch = max(epoch_mean_scores, key=epoch_mean_scores.get)
+        seed_scores = epoch_seed_scores[best_epoch]
 
         final_score = np.round(float(np.mean(seed_scores)), 2)
         trial.set_user_attr("model", model_name)
         trial.set_user_attr("architecture_size", params["architecture_size"])
         trial.set_user_attr("lr_mode", params["lr_mode"])
         trial.set_user_attr("lr_scheduler", scheduler_name)
-        trial.set_user_attr("trained_epochs", int(TUNING_SETTINGS["max_epochs"]))
+        trial.set_user_attr("best_epoch", int(best_epoch))
+        trial.set_user_attr("trained_epochs", int(best_epoch))
         trial.set_user_attr(
             "computation_time_seconds",
             float(time.perf_counter() - trial_start_time),
