@@ -386,8 +386,24 @@ def load_best_params(tuning_results_dir, model_name):
             continue
         best_params[column.removeprefix("params_")] = value
 
+    user_attrs = {}
+    for column, value in best_row.items():
+        if not column.startswith("user_attrs_"):
+            continue
+        if pd.isna(value):
+            continue
+        user_attrs[column.removeprefix("user_attrs_")] = value
+
     best_value = float(best_row["value"]) if "value" in best_row else None
-    return best_params, best_value, trials_csv
+    return best_params, user_attrs, best_value, trials_csv
+
+
+def resolve_training_epochs(user_attrs):
+    if "best_epoch" in user_attrs:
+        return int(user_attrs["best_epoch"])
+    if "trained_epochs" in user_attrs:
+        return int(user_attrs["trained_epochs"])
+    return int(DEFAULT_TUNING_MAX_EPOCHS)
 
 
 def build_model_config(model_name, best_params):
@@ -416,17 +432,18 @@ def _to_seed_list(seeds_value):
     raise ValueError(f"Unsupported seeds format: {type(seeds_value)}")
 
 
-def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, output_dir, trials_csv):
+def run_evaluation(model_name, best_params, user_attrs, dataset_path, file_list, seeds, output_dir, trials_csv):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model_class = MODEL_SPECS[model_name]["model_class"]
     evaluation_start_time = time.perf_counter()
 
     config, resolved_params = build_model_config(model_name, best_params)
+    training_epochs = resolve_training_epochs(user_attrs)
     use_scheduler = resolved_params["lr_mode"] == "scheduled"
     scheduler_name = DEFAULT_SCHEDULED_LR_SCHEDULER if use_scheduler else "none"
     scheduler_kwargs = (
         scheduled_lr_kwargs(
-            DEFAULT_TUNING_MAX_EPOCHS,
+            training_epochs,
             scheduler_name,
             DEFAULT_SCHEDULED_LR_SCHEDULER_KWARGS,
         )
@@ -477,7 +494,7 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
                     trainer,
                     evaluator,
                     win_size=int(resolved_params["win_size"]),
-                    epochs=DEFAULT_TUNING_MAX_EPOCHS,
+                    epochs=training_epochs,
                     data=(data_train, data_test, labels),
                 )
 
@@ -528,6 +545,7 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
             "architecture_size": str(resolved_params["architecture_size"]),
             "lr_mode": str(resolved_params["lr_mode"]),
             "scheduler": scheduler_name,
+            "trained_epochs": int(training_epochs),
             "total_execution_time_seconds": float(time.perf_counter() - evaluation_start_time),
             "AUC-PR": summary.get("AUC-PR", np.nan),
             "AUC-ROC": summary.get("AUC-ROC", np.nan),
@@ -595,13 +613,14 @@ def main():
 
     summary_rows = []
     for model_name in tqdm(args.target_models, desc="Models"):
-        best_params, best_value, trials_csv = load_best_params(
+        best_params, user_attrs, best_value, trials_csv = load_best_params(
             args.tuning_results_dir,
             model_name,
         )
         strategy_results, model_summary_rows = run_evaluation(
             model_name,
             best_params,
+            user_attrs,
             args.dataset_path,
             file_list,
             args.seeds,
