@@ -350,7 +350,7 @@ def resolve_trials_csv(tuning_results_dir, model_name):
     )
 
 
-def load_best_params(tuning_results_dir, model_name):
+def load_best_params(tuning_results_dir, model_name, strategy=None):
     trials_csv = resolve_trials_csv(tuning_results_dir, model_name)
     trials_df = pd.read_csv(trials_csv)
 
@@ -359,6 +359,31 @@ def load_best_params(tuning_results_dir, model_name):
             str).str.lower() == "complete"]
         if not completed.empty:
             trials_df = completed
+
+    if strategy is not None:
+        strategy_col = None
+        if "params_strategy" in trials_df.columns:
+            strategy_col = "params_strategy"
+        elif "user_attrs_strategy" in trials_df.columns:
+            strategy_col = "user_attrs_strategy"
+
+        if strategy_col is not None:
+            filtered_df = trials_df[
+                trials_df[strategy_col].astype(str).str.lower() == str(strategy).lower()
+            ]
+            if not filtered_df.empty:
+                trials_df = filtered_df
+            else:
+                available_strategies = sorted(
+                    {
+                        str(value)
+                        for value in trials_df[strategy_col].dropna().astype(str).unique()
+                    }
+                )
+                raise ValueError(
+                    f"No completed trials found for model '{model_name}' and strategy '{strategy}'. "
+                    f"Available strategies in '{trials_csv}': {available_strategies}"
+                )
 
     if "value" in trials_df.columns:
         max_value = trials_df["value"].astype(float).max()
@@ -432,33 +457,39 @@ def _to_seed_list(seeds_value):
     raise ValueError(f"Unsupported seeds format: {type(seeds_value)}")
 
 
-def run_evaluation(model_name, best_params, user_attrs, dataset_path, file_list, seeds, output_dir, trials_csv):
+def run_evaluation(model_name, best_by_strategy, dataset_path, file_list, seeds, output_dir):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model_class = MODEL_SPECS[model_name]["model_class"]
     evaluation_start_time = time.perf_counter()
-
-    config, resolved_params = build_model_config(model_name, best_params)
-    training_epochs = resolve_training_epochs(user_attrs)
-    use_scheduler = resolved_params["lr_mode"] == "scheduled"
-    scheduler_name = DEFAULT_SCHEDULED_LR_SCHEDULER if use_scheduler else "none"
-    scheduler_kwargs = (
-        scheduled_lr_kwargs(
-            training_epochs,
-            scheduler_name,
-            DEFAULT_SCHEDULED_LR_SCHEDULER_KWARGS,
-        )
-        if use_scheduler
-        else {}
-    )
 
     model_output_dir = os.path.join(output_dir, model_name)
     os.makedirs(model_output_dir, exist_ok=True)
 
     # Evaluate both strategies
-    strategies = ["disjoint"] #["overlapping", "disjoint"]
+    strategies = ["overlapping", "disjoint"]
     strategy_results = {}
 
     for strategy in strategies:
+        strategy_best = best_by_strategy[strategy]
+        best_params = strategy_best["best_params"]
+        user_attrs = strategy_best["user_attrs"]
+        best_value = strategy_best["best_value"]
+        trials_csv = strategy_best["trials_csv"]
+
+        config, resolved_params = build_model_config(model_name, best_params)
+        training_epochs = resolve_training_epochs(user_attrs)
+        use_scheduler = resolved_params["lr_mode"] == "scheduled"
+        scheduler_name = DEFAULT_SCHEDULED_LR_SCHEDULER if use_scheduler else "none"
+        scheduler_kwargs = (
+            scheduled_lr_kwargs(
+                training_epochs,
+                scheduler_name,
+                DEFAULT_SCHEDULED_LR_SCHEDULER_KWARGS,
+            )
+            if use_scheduler
+            else {}
+        )
+
         seed_frames = []
         for seed in seeds:
             set_seed(seed)
@@ -530,23 +561,31 @@ def run_evaluation(model_name, best_params, user_attrs, dataset_path, file_list,
             "mean_df": mean_df,
             "std_df": std_df,
             "summary": mean_df.mean(numeric_only=True).to_dict(),
+            "resolved_params": resolved_params,
+            "training_epochs": training_epochs,
+            "scheduler": scheduler_name,
+            "best_value": best_value,
+            "trials_csv": trials_csv,
         }
 
     # Create summary rows for both strategies
     summary_rows = []
     for strategy in strategies:
-        summary = strategy_results[strategy]["summary"]
+        strategy_result = strategy_results[strategy]
+        summary = strategy_result["summary"]
+        resolved_params = strategy_result["resolved_params"]
         summary_row = {
             "model": model_name,
             "strategy": strategy,
-            "trials_csv": os.path.basename(trials_csv),
+            "trials_csv": strategy_result["trials_csv"],
             "best_win_size": int(resolved_params["win_size"]),
             "lr": float(resolved_params["lr"]),
             "architecture_size": str(resolved_params["architecture_size"]),
             "lr_mode": str(resolved_params["lr_mode"]),
-            "scheduler": scheduler_name,
-            "trained_epochs": int(training_epochs),
+            "scheduler": strategy_result["scheduler"],
+            "trained_epochs": int(strategy_result["training_epochs"]),
             "total_execution_time_seconds": float(time.perf_counter() - evaluation_start_time),
+            "best_trial_value": strategy_result["best_value"],
             "AUC-PR": summary.get("AUC-PR", np.nan),
             "AUC-ROC": summary.get("AUC-ROC", np.nan),
             "Standard-F1": summary.get("Standard-F1", np.nan),
@@ -613,28 +652,37 @@ def main():
 
     summary_rows = []
     for model_name in tqdm(args.target_models, desc="Models"):
-        best_params, user_attrs, best_value, trials_csv = load_best_params(
-            args.tuning_results_dir,
-            model_name,
-        )
+        best_by_strategy = {}
+        for strategy in ["overlapping", "disjoint"]:
+            best_params, user_attrs, best_value, trials_csv = load_best_params(
+                args.tuning_results_dir,
+                model_name,
+                strategy=strategy,
+            )
+            best_by_strategy[strategy] = {
+                "best_params": best_params,
+                "user_attrs": user_attrs,
+                "best_value": best_value,
+                "trials_csv": trials_csv,
+            }
+
         strategy_results, model_summary_rows = run_evaluation(
             model_name,
-            best_params,
-            user_attrs,
+            best_by_strategy,
             args.dataset_path,
             file_list,
             args.seeds,
             args.output_dir,
-            trials_csv,
         )
-        
-        for summary_row in model_summary_rows:
-            summary_row["best_trial_value"] = best_value
-            summary_row["trials_csv"] = trials_csv
-            summary_rows.append(summary_row)
 
-        print(f"[{model_name}] best trial value: {best_value}")
-        print(f"[{model_name}] best params: {best_params}")
+        summary_rows.extend(model_summary_rows)
+
+        for strategy in ["overlapping", "disjoint"]:
+            strategy_best = best_by_strategy[strategy]
+            print(
+                f"[{model_name}] strategy={strategy} best trial value: {strategy_best['best_value']}"
+            )
+            print(f"[{model_name}] strategy={strategy} best params: {strategy_best['best_params']}")
         print(f"[{model_name}] results saved in {os.path.join(args.output_dir, model_name)}")
 
     summary_df = pd.DataFrame(summary_rows)

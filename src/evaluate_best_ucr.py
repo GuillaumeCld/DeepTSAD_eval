@@ -24,11 +24,11 @@ from training import Trainer
 DATA_CACHE = {}
 
 DEFAULT_TARGET_MODELS = ["DLinear", "TimesNet"]
-DEFAULT_SEEDS = [0, 1, 2]
+DEFAULT_SEEDS = [3,4,5,6,7]
 DEFAULT_TUNING_RESULTS_DIR = "results"
 DEFAULT_OUTPUT_DIR = "results/evaluation_best_ucr"
 DEFAULT_DATASET_PATH = "Datasets/UCR/"
-DEFAULT_TUNING_MAX_EPOCHS = 20
+DEFAULT_TUNING_MAX_EPOCHS = 50
 DEFAULT_BATCH_SIZE = 1024
 DEFAULT_EVAL_BATCH_SIZE = 10000
 DEFAULT_VALIDATION_SIZE = 0.2
@@ -187,16 +187,12 @@ def load_ucr_dataset(path, filename):
         data_train = data[:split]
         data_test = data[split:]
         
-        # Adjust anomaly bounds to be relative to test data
-        anomaly_start = max(0, start - split)
-        anomaly_end = max(0, end - split)
+
+        length = max(end - start + 1, 100)
+        start -= split
+        end -= split
         
-        # Create binary labels (1 for anomalies, 0 for normal)
-        labels = np.zeros(len(data))
-        if anomaly_start < len(data) and anomaly_end >= 0:
-            labels[max(0, start):min(len(data), end + 1)] = 1
-        
-        DATA_CACHE[key] = (data_train, data_test, labels[split:], (anomaly_start, anomaly_end))
+        DATA_CACHE[key] = (data_train, data_test, (start, end, length))
 
     return DATA_CACHE[key]
 
@@ -358,9 +354,7 @@ BUILD_CONFIGS = {
 
 def resolve_trials_csv(tuning_results_dir, model_name):
     candidates = [
-        os.path.join(tuning_results_dir, f"HP_{model_name}.csv"),
-        os.path.join(tuning_results_dir, f"{model_name}.csv"),
-        os.path.join(tuning_results_dir, model_name, f"HP_{model_name}.csv"),
+        os.path.join(tuning_results_dir, f"FHP_{model_name}.csv"),
     ]
 
     for candidate in candidates:
@@ -460,9 +454,10 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
     os.makedirs(model_output_dir, exist_ok=True)
 
     seed_frames = []
+    scores = []
     for seed in seeds:
         set_seed(seed)
-
+        seed_score = 0
         trainer = Trainer(
             batch_size=DEFAULT_BATCH_SIZE,
             lr=float(resolved_params["lr"]),
@@ -476,74 +471,55 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
         evaluator = Evaluator(
             batch_size=DEFAULT_EVAL_BATCH_SIZE,
             device=device,
-            metrics="restr",
             strategy=str(resolved_params.get("strategy", "overlapping")),
         )
 
         rows = []
         for filename in tqdm(file_list, desc=f"{model_name} seed={seed}"):
             file_start_time = time.perf_counter()
+            hit = 0
+            data_train, data_test, (anom_start, anom_end, anom_length) = load_ucr_dataset(
+                dataset_path, filename)
             
-            try:
-                data_train, data_test, labels, (anom_start, anom_end) = load_ucr_dataset(
-                    dataset_path, filename)
-                
-                # Skip if window size is larger than data
-                win_size = int(resolved_params["win_size"])
-                if len(data_test) < win_size:
-                    continue
-
-                model = model_class(config).to(device)
-                metrics = train_and_evaluate(
-                    dataset_path,
-                    filename,
-                    model,
-                    trainer,
-                    evaluator,
-                    win_size=win_size,
-                    epochs=DEFAULT_TUNING_MAX_EPOCHS,
-                    data=(data_train, data_test, labels),
-                )
-
-                row = {
-                    "filename": filename,
-                    "seed": seed,
-                    "execution_time_seconds": float(time.perf_counter() - file_start_time),
-                    "anomaly_start": anom_start,
-                    "anomaly_end": anom_end,
-                }
-                row.update(metrics)
-                rows.append(row)
-            except Exception as e:
-                # Log error but continue with next file
-                print(f"Error processing {filename}: {e}")
+            # Skip if window size is larger than data
+            win_size = int(resolved_params["win_size"])
+            if len(data_test) < win_size:
                 continue
 
-        if rows:
-            seed_df = pd.DataFrame(rows)
-            seed_df.to_csv(os.path.join(model_output_dir,
-                           f"seed{seed}.csv"), index=False)
-            seed_frames.append(seed_df)
+            model = model_class(config).to(device)
+            trainer.train(model, data_train, 50)
+            reconstruction = evaluator.reconstruction_error(data_test, model, win_size)
 
-    if not seed_frames:
-        raise ValueError(f"No results generated for {model_name}")
+            anomaly = np.argmax(reconstruction)
 
-    combined_df = pd.concat(seed_frames, ignore_index=True)
-    mean_df = (
-        combined_df.groupby("filename", as_index=False)
-        .mean(numeric_only=True)
-        .sort_values("filename")
-    )
-    std_df = (
-        combined_df.groupby("filename", as_index=False)
-        .std(numeric_only=True)
-        .sort_values("filename")
-    )
+            if anom_start - anom_length <= anomaly <= anom_end + anom_length:
+                hit = 1
+            
+            row = {
+                "filename": filename,
+                "seed": seed,
+                "execution_time_seconds": float(time.perf_counter() - file_start_time),
+                "score": hit,
+            }
+            rows.append(row)
 
-    mean_df.to_csv(os.path.join(model_output_dir, "mean.csv"), index=False)
-    std_df.to_csv(os.path.join(model_output_dir, "std.csv"), index=False)
+            seed_score += hit
 
-    summary = mean_df.mean(numeric_only=True).to_dict()
+        seed_score_percentage = seed_score / len(file_list) * 100
+        print(f"[{model_name}] Seed {seed} - Score: {seed_score}/{len(file_list)} = {seed_score_percentage:.2f}%")
+        scores.append(seed_score_percentage)
+        seed_df = pd.DataFrame(rows)
+        seed_df.to_csv(os.path.join(model_output_dir,
+                        f"seed{seed}.csv"), index=False)
+        seed_frames.append(seed_df)
+
+
+
+    average_score = np.mean(scores)
+    std_score = np.std(scores)
+   
+    print(f"[{model_name}] Average Score: {average_score:.2f}%, Std Dev: {std_score:.2f}% across seeds {seeds}")
+
     summary_row = {
         "model": model_name,
         "trials_csv": os.path.basename(trials_csv),
@@ -554,12 +530,11 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
         "lr_mode": str(resolved_params.get("lr_mode", "constant")),
         "scheduler": scheduler_name,
         "total_execution_time_seconds": float(time.perf_counter() - evaluation_start_time),
-        "AUC-PR": summary.get("AUC-PR", np.nan),
-        "AUC-ROC": summary.get("AUC-ROC", np.nan),
-        "Standard-F1": summary.get("Standard-F1", np.nan),
+        "Mean score": average_score,
+        "Std score": std_score,
     }
 
-    return mean_df, std_df, summary_row
+    return  summary_row
 
 
 def parse_args():
@@ -629,7 +604,7 @@ def main():
                 args.tuning_results_dir,
                 model_name,
             )
-            _, _, summary_row = run_evaluation(
+            summary_row = run_evaluation(
                 model_name,
                 best_params,
                 args.dataset_path,
