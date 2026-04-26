@@ -5,7 +5,7 @@ import pandas as pd
 import os
 from types import SimpleNamespace
 
-from models import Linear, TimesNet, DLinear, iTransformer, Transformer, TimeMixer
+from models import Linear, TimesNet, DLinear, iTransformer, Transformer, TimeMixer, AutoEncoder
 from tqdm import tqdm
 
 import numpy as np
@@ -26,8 +26,9 @@ def main():
     file_list = os.listdir(path)
     file_list = [f for f in file_list if f.endswith('.txt')]
 
-    win_size = 64
+    win_size = 96
     
+    # DLinear
     moving_avg = int(win_size * 0.1)
     moving_avg = moving_avg + 1 if moving_avg % 2 == 0 else moving_avg
     config = SimpleNamespace(
@@ -101,22 +102,22 @@ def main():
     # )
 
     # timesnet
-    config = SimpleNamespace(
-        task_name='anomaly_detection',
-        seq_len=win_size,
-        label_len=win_size,  # unused
-        pred_len=0,   # no forecasting for reconstruction
-        top_k=3,
-        d_model=8,
-        d_ff=16,
-        num_kernels=6, # number of kernels in InceptionBlock
-        e_layers=1,    # number of TimesNet blocks
-        embed='timeF',
-        freq='t',
-        dropout=0.1,   # dropout rate
-        enc_in=1,      # univariate input
-        c_out=1,       # univariate output
-    )
+    # config = SimpleNamespace(
+    #     task_name='anomaly_detection',
+    #     seq_len=win_size,
+    #     label_len=win_size,  # unused
+    #     pred_len=0,   # no forecasting for reconstruction
+    #     top_k=3,
+    #     d_model=8,
+    #     d_ff=16,
+    #     num_kernels=6, # number of kernels in InceptionBlock
+    #     e_layers=1,    # number of TimesNet blocks
+    #     embed='timeF',
+    #     freq='t',
+    #     dropout=0.1,   # dropout rate
+    #     enc_in=1,      # univariate input
+    #     c_out=1,       # univariate output
+    # )
 
     # dlinear
     # config = SimpleNamespace(
@@ -175,32 +176,25 @@ def main():
     # )
 
     # transformer
-    config = SimpleNamespace(
-        task_name='anomaly_detection',
-        seq_len=win_size,
-        label_len=win_size,  # unused
-        pred_len=0,   # no forecasting for reconstruction
-        d_model=16,
-        d_ff=32,
-        factor=3,
-        e_layers=3,    # number of TimesNet blocks
-        d_layers=2,
-        enc_in=1,      # univariate input
-        dec_in=1,      # univariate input
-        c_out=1,       # univariate output
-        n_heads=8,
-        activation='gelu',
-        moving_avg=25,
-        embed="fixed",
-        freq='t',
-        dropout=0.1,   # dropout rate
-        down_sampling_window=3,
-        channel_independence=True,
-        decomp_method='moving_avg',
-        down_sampling_layers=2,
-        use_norm=False,
-        down_sampling_method="avg"
-    )
+    # config = SimpleNamespace(
+    #     task_name='anomaly_detection',
+    #     seq_len=win_size,
+    #     label_len=win_size,  # unused
+    #     pred_len=0,   # no forecasting for reconstruction
+    #     d_model=16,
+    #     d_ff=32,
+    #     e_layers=2,    # number of TimesNet blocks
+    #     enc_in=1,      # univariate input
+    #     dec_in=1,      # univariate input
+    #     c_out=1,       # univariate output
+    #     n_heads=2,
+    #     activation='gelu',
+    #     embed="fixed",
+    #     freq='t',
+    #     dropout=0.1,   # dropout rate
+    #     channel_independence=True,
+
+    # )
 
     # timemixer
     # config = SimpleNamespace(
@@ -230,14 +224,47 @@ def main():
     #     down_sampling_method="avg"
     # )
     
+    # AutoEncoder
+    latent_len = max(2, int(96 * 0.4))
+
+    hidden_dims = [
+        min(max(2, int(width)), max(2, 96 -1))
+        for width in [48, 24]
+    ]
+    config = SimpleNamespace(
+        task_name="anomaly_detection",
+        seq_len=win_size,
+        enc_in=1,
+        latent_len=latent_len,
+        hidden_dims=hidden_dims,
+        activation="relu",
+    )
+
 
     trainer = Trainer(
         batch_size=1024,
-        lr=1e-3,
+        lr=1e-2,
         device='cuda',
         win_size=win_size,
-        validation_size=0.2
+        validation_size=0.2,
+        lr_scheduler=None
     )
+    
+    scheduled_lr_scheduler = "plateau"
+    scheduled_lr_scheduler_kwargs = {
+        "patience": 5,
+        "factor": 0.5,
+        "min_lr": 1e-5,
+    }
+    # trainer = Trainer(
+    #     batch_size=1024,
+    #     lr=1e-3,
+    #     device='cuda',
+    #     win_size=win_size,
+    #     validation_size=0.2,
+    #     lr_scheduler=scheduled_lr_scheduler,
+    #     lr_scheduler_kwargs=scheduled_lr_scheduler_kwargs
+    # )
     strategies = ['overlapping']
     for seed in range(3, 8, 1):
         torch.manual_seed(seed)
@@ -263,8 +290,8 @@ def main():
             start -= split
             end -= split
 
-            model = Transformer.Model(config)
-            trainer.train(model, train_data, 20)
+            model = AutoEncoder.Model(config)
+            trainer.train(model, train_data, 50)
 
             for strat in strategies:
                 evaluator = Evaluator(batch_size=1024, device='cuda',
@@ -283,7 +310,7 @@ def main():
 
                 results_df = pd.DataFrame(results[strat])
                 results_df.to_csv(
-                    f'results/Transformer/hp_ucr_{win_size}_{strat}_{seed}.csv', index=False)
+                    f'results/AutoEncoder/hp_ucr_{win_size}_{strat}_{seed}.csv', index=False)
 
         for strat in strategies:
             print(

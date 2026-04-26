@@ -137,15 +137,15 @@ ARCHITECTURE_PRESETS = {
     "AutoEncoder": {
         "small": {
             "latent_ratio": 0.25,
-            "hidden_dims": [24],
+            "hidden_ratios": [0.75],
         },
         "medium": {
             "latent_ratio": 0.4,
-            "hidden_dims": [48, 24],
+            "hidden_ratios": [0.9, 0.6],
         },
         "large": {
             "latent_ratio": 0.5,
-            "hidden_dims": [96, 48, 24],
+            "hidden_ratios": [1.0, 0.75, 0.5],
         },
     },
 }
@@ -265,10 +265,17 @@ def build_autoformer_config(params):
 def build_autoencoder_config(params):
     latent_len = max(2, int(params["win_size"] * params["latent_ratio"]))
 
-    hidden_dims = [
-        min(max(2, int(width)), max(2, params["win_size"] - 1))
-        for width in params.get("hidden_dims", [])
-    ]
+    hidden_dims = []
+    if "hidden_ratios" in params:
+        hidden_dims = [
+            min(max(2, int(round(params["win_size"] * float(ratio)))), max(2, params["win_size"] - 1))
+            for ratio in params.get("hidden_ratios", [])
+        ]
+    elif "hidden_dims" in params:
+        hidden_dims = [
+            min(max(2, int(width)), max(2, params["win_size"] - 1))
+            for width in params.get("hidden_dims", [])
+        ]
 
     return SimpleNamespace(
         task_name="anomaly_detection",
@@ -276,6 +283,7 @@ def build_autoencoder_config(params):
         enc_in=1,
         latent_len=latent_len,
         hidden_dims=hidden_dims,
+        hidden_ratios=params.get("hidden_ratios", []),
         activation="relu",
     )
 
@@ -515,6 +523,9 @@ def run_model_study(model_name):
         pruner=optuna.pruners.MedianPruner(),
         sampler=optuna.samplers.GridSampler(search_space),
     )
+    for trial in study.trials:
+        if trial.state == optuna.trial.TrialState.FAIL: 
+            study.enqueue_trial(trial.params)
 
     study.optimize(
         make_objective(model_name),

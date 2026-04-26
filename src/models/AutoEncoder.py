@@ -20,6 +20,19 @@ def _build_mlp(input_dim, hidden_dims, output_dim, activation):
     return nn.Sequential(*layers)
 
 
+def _resolve_hidden_dims(seq_len, hidden_dims=None, hidden_ratios=None):
+    # Prefer explicit dims if provided, else derive from ratios of seq_len.
+    if hidden_dims is not None and len(hidden_dims) > 0:
+        dims = [int(dim) for dim in hidden_dims]
+    else:
+        ratios = hidden_ratios or []
+        dims = [int(round(float(ratio) * seq_len)) for ratio in ratios]
+
+    max_dim = max(2, seq_len - 1)
+    resolved = [min(max(2, dim), max_dim) for dim in dims]
+    return resolved
+
+
 class Model(nn.Module):
     """
     Simple linear autoencoder for sequences.
@@ -38,7 +51,11 @@ class Model(nn.Module):
         # Latent compressed length along the time dimension
         self.latent_len = getattr(configs, "latent_len", self.seq_len // 2)
         # Hidden layers on the time axis (seq_len -> ... -> latent_len)
-        self.hidden_dims = list(getattr(configs, "hidden_dims", []))
+        self.hidden_dims = _resolve_hidden_dims(
+            self.seq_len,
+            hidden_dims=getattr(configs, "hidden_dims", None),
+            hidden_ratios=getattr(configs, "hidden_ratios", None),
+        )
         self.activation = getattr(configs, "activation", "relu")
         self.individual = individual
 

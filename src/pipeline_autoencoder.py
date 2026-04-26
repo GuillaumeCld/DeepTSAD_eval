@@ -56,11 +56,10 @@ def train_and_evaluate(path,
 
 
 
-def main():
+def main(seed):
 
     # fix seed for reproducibility
 
-    seed = 1
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -68,38 +67,27 @@ def main():
     random.seed(seed)
 
     path = 'Datasets/TSB-AD-U/'
-    file_list = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
+    file_list = 'Datasets/File_List/TSB-AD-U-Eva.csv'
     file_list = pd.read_csv(file_list)['file_name'].values
 
-    win_size = 32
+    win_size = 96
 
+    latent_len = max(2, int(96 * 0.4))
+
+    hidden_dims = [
+        min(max(2, int(width)), max(2, win_size -1))
+        for width in [48, 24]
+    ]
     config = SimpleNamespace(
-        task_name='anomaly_detection',
+        task_name="anomaly_detection",
         seq_len=win_size,
-        label_len=win_size,  # unused
-        pred_len=0,   # no forecasting for reconstruction
-        d_model=8,
-        d_ff=16,   
-        factor=3,    
-        e_layers=1,    # number of TimesNet blocks     
-        d_layers=1,
-        enc_in=1,      # univariate input
-        dec_in=1,      # univariate input
-        c_out=1,       # univariate output 
-        n_heads=2,
-        activation='gelu',
-        moving_avg=25,
-        embed="fixed",  
-        freq='t',       
-        dropout=0.1,   # dropout rate
-        down_sampling_window=3,
-        channel_independence=True,
-        decomp_method='moving_avg',
-        down_sampling_layers=2,
-        use_norm=False,
-        down_sampling_method="avg"
+        enc_in=1,
+        latent_len=latent_len,
+        hidden_dims=hidden_dims,
+        activation="relu",
     )
-    
+
+
 
     
     trainer = Trainer(
@@ -116,7 +104,7 @@ def main():
         strategy='overlapping'
     )
     results = []
-    for filename in tqdm(file_list[::10]):
+    for filename in tqdm(file_list):
         model = AutoEncoder.Model(config)
         metrics = train_and_evaluate(
             path,
@@ -125,15 +113,16 @@ def main():
             trainer,
             evaluator,
             win_size=win_size,
-            epochs=20
+            epochs=50
         )
         result = {'filename': filename}
         result.update(metrics)
         results.append(result)
         
         results_df = pd.DataFrame(results)
-        results_df.to_csv('AutoEncoder_TSB-AD-U_results_mean_short.csv', index=False)
+        # results_df.to_csv(f'results/AutoEncoder/eval_hp_{seed}.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 if __name__ == '__main__':
-    main()
+    for seed in range(3, 4, 1):
+        main(seed)
