@@ -123,9 +123,10 @@ ARCHITECTURE_PRESETS = {
         },
     },
     "AutoEncoder": {
-        "small": {"latent_ratio": 0.25, "hidden_dims": [24]},
-        "medium": {"latent_ratio": 0.4, "hidden_dims": [48, 24]},
-        "large": {"latent_ratio": 0.5, "hidden_dims": [96, 48, 24]},
+        # "small": {"latent_ratio": 0.25, "hidden_ratios": [0.75]},
+        "small": {"hidden_ratios": [0.5, 0.25, 0.4]},
+        "medium": {"latent_ratio": 0.4, "hidden_ratios": [0.9, 0.6]},
+        "large": {"latent_ratio": 0.5, "hidden_ratios": [1.0, 0.75, 0.5]},
     },
 }
 
@@ -325,19 +326,13 @@ def build_autoformer_config(params):
 
 
 def build_autoencoder_config(params):
-    latent_len = max(2, int(params["win_size"] * params["latent_ratio"]))
 
-    hidden_dims = [
-        min(max(2, int(width)), max(2, params["win_size"] - 1))
-        for width in params.get("hidden_dims", [])
-    ]
-
+    print(f"Building AutoEncoder config with params: {params}")
     return SimpleNamespace(
         task_name="anomaly_detection",
         seq_len=params["win_size"],
         enc_in=1,
-        latent_len=latent_len,
-        hidden_dims=hidden_dims,
+        hidden_ratios=params["hidden_ratios"],
         activation="relu",
     )
 
@@ -431,13 +426,13 @@ def _to_seed_list(seeds_value):
         return [int(seed.strip()) for seed in seeds_value.split(",") if seed.strip()]
     raise ValueError(f"Unsupported seeds format: {type(seeds_value)}")
 
-
 def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, output_dir, trials_csv):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model_class = MODEL_SPECS[model_name]["model_class"]
     evaluation_start_time = time.perf_counter()
 
     config, resolved_params = build_model_config(model_name, best_params)
+    
     use_scheduler = resolved_params.get("lr_mode", "constant") == "scheduled"
     scheduler_name = DEFAULT_SCHEDULED_LR_SCHEDULER if use_scheduler else "none"
     scheduler_kwargs = (
@@ -448,6 +443,17 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
         )
         if use_scheduler
         else {}
+    )
+
+    # Use the number of epochs found in tuning results, with a safe fallback.
+    train_epochs = int(
+        resolved_params.get(
+            "epochs",
+            resolved_params.get(
+                "train_epochs",
+                resolved_params.get("max_epochs", DEFAULT_TUNING_MAX_EPOCHS),
+            ),
+        )
     )
 
     model_output_dir = os.path.join(output_dir, model_name)
@@ -479,22 +485,26 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
             file_start_time = time.perf_counter()
             hit = 0
             data_train, data_test, (anom_start, anom_end, anom_length) = load_ucr_dataset(
-                dataset_path, filename)
-            
+                dataset_path, filename
+            )
+
             # Skip if window size is larger than data
             win_size = int(resolved_params["win_size"])
             if len(data_test) < win_size:
                 continue
 
             model = model_class(config).to(device)
-            trainer.train(model, data_train, 50)
+            trainer.train(model, data_train, train_epochs)
             reconstruction = evaluator.reconstruction_error(data_test, model, win_size)
 
             anomaly = np.argmax(reconstruction)
 
             if anom_start - anom_length <= anomaly <= anom_end + anom_length:
+                seed_score += 1
                 hit = 1
-            
+            else: 
+                hit = 0
+
             row = {
                 "filename": filename,
                 "seed": seed,
@@ -503,22 +513,22 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
             }
             rows.append(row)
 
-            seed_score += hit
+            
+        print(f"[{model_name}] Score: {seed_score/len(file_list)*100:.2f}%")
 
-        seed_score_percentage = seed_score / len(file_list) * 100
-        print(f"[{model_name}] Seed {seed} - Score: {seed_score}/{len(file_list)} = {seed_score_percentage:.2f}%")
-        scores.append(seed_score_percentage)
-        seed_df = pd.DataFrame(rows)
-        seed_df.to_csv(os.path.join(model_output_dir,
-                        f"seed{seed}.csv"), index=False)
-        seed_frames.append(seed_df)
+    seed_score_percentage = seed_score / len(file_list) * 100
+    print(f"[{model_name}] Seed {seed} - Score: {seed_score}/{len(file_list)} = {seed_score_percentage:.2f}%")
+    scores.append(seed_score_percentage)
+    seed_df = pd.DataFrame(rows)
+    seed_df.to_csv(os.path.join(model_output_dir,
+                    f"seed{seed}.csv"), index=False)
+    seed_frames.append(seed_df)
 
 
 
     average_score = np.mean(scores)
     std_score = np.std(scores)
    
-    print(f"[{model_name}] Average Score: {average_score:.2f}%, Std Dev: {std_score:.2f}% across seeds {seeds}")
 
     summary_row = {
         "model": model_name,

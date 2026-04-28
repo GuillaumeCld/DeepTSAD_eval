@@ -344,9 +344,7 @@ BUILD_CONFIGS = {
 
 def resolve_trials_csv(tuning_results_dir, model_name):
     candidates = [
-        os.path.join(tuning_results_dir, f"HP_{model_name}.csv"),
-        os.path.join(tuning_results_dir, f"{model_name}.csv"),
-        os.path.join(tuning_results_dir, model_name, f"HP_{model_name}.csv"),
+        os.path.join(tuning_results_dir, f"FHP_{model_name}.csv"),
     ]
 
     for candidate in candidates:

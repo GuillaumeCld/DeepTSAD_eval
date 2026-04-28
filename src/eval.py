@@ -47,8 +47,6 @@ class Evaluator:
 
     def reconstruction_error(self, data, model, win_size, stride=1, mask_ratio=0.3):
 
-        model = model.to(self.device)
-        model.eval()
 
         data = data.astype(np.float32)
 
