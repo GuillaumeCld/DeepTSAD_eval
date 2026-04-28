@@ -123,10 +123,9 @@ ARCHITECTURE_PRESETS = {
         },
     },
     "AutoEncoder": {
-        # "small": {"latent_ratio": 0.25, "hidden_ratios": [0.75]},
-        "small": {"hidden_ratios": [0.5, 0.25, 0.4]},
-        "medium": {"latent_ratio": 0.4, "hidden_ratios": [0.9, 0.6]},
-        "large": {"latent_ratio": 0.5, "hidden_ratios": [1.0, 0.75, 0.5]},
+        "small": {"hidden_ratios": [0.5, 0.25]},
+        "medium": {"hidden_ratios": [0.75, 0.5, 0.25]},
+        "large": {"hidden_ratios": [1, 0.75, 0.5, 0.25]},
     },
 }
 

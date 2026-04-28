@@ -125,9 +125,9 @@ ARCHITECTURE_PRESETS = {
         },
     },
     "AutoEncoder": {
-        "small": {"latent_ratio": 0.25, "hidden_ratios": [0.75]},
-        "medium": {"latent_ratio": 0.4, "hidden_ratios": [0.9, 0.6]},
-        "large": {"latent_ratio": 0.5, "hidden_ratios": [1.0, 0.75, 0.5]},
+        "small": {"hidden_ratios": [0.5, 0.25]},
+        "medium": {"hidden_ratios": [0.75, 0.5, 0.25]},
+        "large": {"hidden_ratios": [1, 0.75, 0.5, 0.25]},
     },
 }
 
@@ -307,27 +307,13 @@ def build_autoformer_config(params):
 
 
 def build_autoencoder_config(params):
-    latent_len = max(2, int(params["win_size"] * params["latent_ratio"]))
 
-    hidden_dims = []
-    if "hidden_ratios" in params:
-        hidden_dims = [
-            min(max(2, int(round(params["win_size"] * float(ratio)))), max(2, params["win_size"] - 1))
-            for ratio in params.get("hidden_ratios", [])
-        ]
-    elif "hidden_dims" in params:
-        hidden_dims = [
-            min(max(2, int(width)), max(2, params["win_size"] - 1))
-            for width in params.get("hidden_dims", [])
-        ]
-
+    print(f"Building AutoEncoder config with params: {params}")
     return SimpleNamespace(
         task_name="anomaly_detection",
         seq_len=params["win_size"],
         enc_in=1,
-        latent_len=latent_len,
-        hidden_dims=hidden_dims,
-        hidden_ratios=params.get("hidden_ratios", []),
+        hidden_ratios=params["hidden_ratios"],
         activation="relu",
     )
 
@@ -547,6 +533,7 @@ def run_evaluation(model_name, best_by_strategy, dataset_path, file_list, seeds,
             seed_df.to_csv(os.path.join(model_output_dir,
                            f"seed{seed}_{strategy}.csv"), index=False)
             seed_frames.append(seed_df)
+            print(seed_df.mean(numeric_only=True))
 
         combined_df = pd.concat(seed_frames, ignore_index=True)
         mean_df = (
