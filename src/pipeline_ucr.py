@@ -225,30 +225,23 @@ def main():
     # )
     
     # AutoEncoder
-    latent_len = max(2, int(96 * 0.4))
-
-    hidden_dims = [
-        min(max(2, int(width)), max(2, 96 -1))
-        for width in [48, 24]
-    ]
+    hidden_ratios = [0.5, 0.25]
     config = SimpleNamespace(
         task_name="anomaly_detection",
         seq_len=win_size,
         enc_in=1,
-        latent_len=latent_len,
-        hidden_dims=hidden_dims,
+        hidden_ratios=hidden_ratios,
         activation="relu",
     )
 
-
-    trainer = Trainer(
-        batch_size=1024,
-        lr=1e-2,
-        device='cuda',
-        win_size=win_size,
-        validation_size=0.2,
-        lr_scheduler=None
-    )
+    # trainer = Trainer(
+    #     batch_size=1024,
+    #     lr=1e-2,
+    #     device='cuda',
+    #     win_size=win_size,
+    #     validation_size=0.2,
+    #     lr_scheduler=None
+    # )
     
     scheduled_lr_scheduler = "plateau"
     scheduled_lr_scheduler_kwargs = {
@@ -256,15 +249,16 @@ def main():
         "factor": 0.5,
         "min_lr": 1e-5,
     }
-    # trainer = Trainer(
-    #     batch_size=1024,
-    #     lr=1e-3,
-    #     device='cuda',
-    #     win_size=win_size,
-    #     validation_size=0.2,
-    #     lr_scheduler=scheduled_lr_scheduler,
-    #     lr_scheduler_kwargs=scheduled_lr_scheduler_kwargs
-    # )
+
+    trainer = Trainer(
+        batch_size=1024,
+        lr=1e-2,
+        device='cuda',
+        win_size=win_size,
+        validation_size=0.2,
+        lr_scheduler=scheduled_lr_scheduler,
+        lr_scheduler_kwargs=scheduled_lr_scheduler_kwargs
+    )
     strategies = ['overlapping']
     for seed in range(3, 8, 1):
         torch.manual_seed(seed)
@@ -273,8 +267,10 @@ def main():
         np.random.seed(seed)
         random.seed(seed)
 
-        results = {"disjoint": [], "overlapping": []}
-        counts = {"disjoint": 0, "overlapping": 0}
+        results = []
+        counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0}
+        evaluator = Evaluator(batch_size=1024, device='cuda',
+                        strategy="overlapping")
         for filename in tqdm(file_list):
 
             meta = filename.split('.')[0].split('_')
@@ -291,30 +287,35 @@ def main():
             end -= split
 
             model = AutoEncoder.Model(config)
+
             trainer.train(model, train_data, 50)
 
-            for strat in strategies:
-                evaluator = Evaluator(batch_size=1024, device='cuda',
-                                      strategy=strat)
-                reconstruction = evaluator.reconstruction_error(
-                    test_data, model, win_size)
 
-                anomaly = np.argmax(reconstruction)
-
-                if start - anomaly_length <= anomaly <= end + anomaly_length:
-                    results[strat].append({'filename': filename, 'score': 1})
-                    counts[strat] += 1
-                else:
-                    results[strat].append({'filename': filename, 'score': 0})
+            reconstruction = evaluator.reconstruction_error(
+                test_data, model, win_size)
 
 
-                results_df = pd.DataFrame(results[strat])
-                results_df.to_csv(
-                    f'results/AutoEncoder/hp_ucr_{win_size}_{strat}_{seed}.csv', index=False)
 
-        for strat in strategies:
-            print(
-                f'Seed {seed} - {strat} Accuracy: {counts[strat]}/{len(file_list)} = {counts[strat]/len(file_list)*100:.1f}'
+            top_ks = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+            sorted_idx = np.argsort(reconstruction)[::-1]
+
+            row = {'filename': filename}
+            for k in top_ks:
+                topk_idx = sorted_idx[:k]
+                hit = int(np.any(
+                    (topk_idx >= start - win_size) &
+                    (topk_idx <= end + win_size)
+                ))
+                row[f'score_top{k}'] = hit
+                counts[k] += hit
+
+            results.append(row)
+
+            results_df = pd.DataFrame(results)
+            results_df.to_csv(
+                f'results/AutoEncoder/paper_run_strict_{seed}.csv',
+                index=False
             )
+        print(f"Seed {seed} - " + ", ".join([f"Top{k}: {counts[k]/len(file_list)*100:.2f}%" for k in top_ks]))
 if __name__ == '__main__':
     main()

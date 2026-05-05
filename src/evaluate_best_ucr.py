@@ -463,6 +463,8 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
     for seed in seeds:
         set_seed(seed)
         seed_score = 0
+        seed_scrict_score = 0
+        seed_semistrict_score = 0
         trainer = Trainer(
             batch_size=DEFAULT_BATCH_SIZE,
             lr=float(resolved_params["lr"]),
@@ -482,7 +484,9 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
         rows = []
         for filename in tqdm(file_list, desc=f"{model_name} seed={seed}"):
             file_start_time = time.perf_counter()
-            hit = 0
+            hit_base = 0
+            hit_strict = 0
+            hit_semistrict = 0
             data_train, data_test, (anom_start, anom_end, anom_length) = load_ucr_dataset(
                 dataset_path, filename
             )
@@ -500,28 +504,34 @@ def run_evaluation(model_name, best_params, dataset_path, file_list, seeds, outp
 
             if anom_start - anom_length <= anomaly <= anom_end + anom_length:
                 seed_score += 1
-                hit = 1
-            else: 
-                hit = 0
+                hit_base = 1
+            if anom_start <= anomaly <= anom_end:
+                hit_strict = 1
+                seed_scrict_score += 1
+            if anom_start - win_size <= anomaly <= anom_end + win_size:
+                hit_semistrict = 1
+                seed_semistrict_score += 1
+            
 
             row = {
                 "filename": filename,
                 "seed": seed,
                 "execution_time_seconds": float(time.perf_counter() - file_start_time),
-                "score": hit,
+                "score": hit_base,
+                "score_strict": hit_strict,
+                "score_semistrict": hit_semistrict,
             }
             rows.append(row)
 
             
-        print(f"[{model_name}] Score: {seed_score/len(file_list)*100:.2f}%")
+        print(f"[{model_name}] Score: {seed_score/len(file_list)*100:.2f} %, Strict Score: {seed_scrict_score/len(file_list)*100:.2f}%, Semistrict Score: {seed_semistrict_score/len(file_list)*100:.2f}%")
 
-    seed_score_percentage = seed_score / len(file_list) * 100
-    print(f"[{model_name}] Seed {seed} - Score: {seed_score}/{len(file_list)} = {seed_score_percentage:.2f}%")
-    scores.append(seed_score_percentage)
-    seed_df = pd.DataFrame(rows)
-    seed_df.to_csv(os.path.join(model_output_dir,
-                    f"seed{seed}.csv"), index=False)
-    seed_frames.append(seed_df)
+        seed_score_percentage = seed_score / len(file_list) * 100
+        scores.append(seed_score_percentage)
+        seed_df = pd.DataFrame(rows)
+        seed_df.to_csv(os.path.join(model_output_dir,
+                        f"seed{seed}.csv"), index=False)
+        seed_frames.append(seed_df)
 
 
 

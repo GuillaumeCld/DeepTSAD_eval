@@ -20,7 +20,7 @@ from eval import Evaluator
 from models import AutoEncoder, Autoformer, DLinear, FEDformer, TimesNet, Transformer
 from procedure import train_and_evaluate
 from training import Trainer
-
+import tools as utils
 
 DATA_CACHE = {}
 
@@ -458,7 +458,7 @@ def run_evaluation(model_name, best_by_strategy, dataset_path, file_list, seeds,
     os.makedirs(model_output_dir, exist_ok=True)
 
     # Evaluate both strategies
-    strategies = ["overlapping", "disjoint"]
+    strategies = ["overlapping"]
     strategy_results = {}
 
     for strategy in strategies:
@@ -505,26 +505,25 @@ def run_evaluation(model_name, best_by_strategy, dataset_path, file_list, seeds,
 
             rows = []
             for filename in tqdm(file_list, desc=f"{model_name} {strategy} seed={seed}"):
-                file_start_time = time.perf_counter()
-                data_train, data_test, labels = load_dataset(
+                data_train, data, labels = load_dataset(
                     dataset_path, filename)
 
+                rank = utils.find_length_rank(data[:, 0].reshape(-1, 1), rank=1)
+
                 model = model_class(config).to(device)
-                metrics = train_and_evaluate(
-                    dataset_path,
-                    filename,
-                    model,
-                    trainer,
-                    evaluator,
-                    win_size=int(resolved_params["win_size"]),
-                    epochs=training_epochs,
-                    data=(data_train, data_test, labels),
-                )
+                start_time = time.time()
+                trainer.train(model, data_train, training_epochs)
+                reconstruction_error = evaluator.reconstruction_error(
+                                data, model, int(resolved_params["win_size"]), 1)
+                end_time = time.time()
+                metrics = evaluator.metrics_fnc(
+                                reconstruction_error, labels, slidingWindow=rank)
+     
 
                 row = {
                     "filename": filename,
                     "seed": seed,
-                    "execution_time_seconds": float(time.perf_counter() - file_start_time),
+                    "execution_time_seconds": end_time - start_time,
                 }
                 row.update(metrics)
                 rows.append(row)

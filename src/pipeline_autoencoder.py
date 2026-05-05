@@ -4,6 +4,8 @@ import models
 import pandas as pd
 import os
 from types import SimpleNamespace
+import src.tools as utils
+
 
 from models import AutoEncoder
 from tqdm import tqdm
@@ -11,7 +13,7 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import random
-
+import time
 
 
 def _read_file(path, filename):
@@ -37,8 +39,9 @@ def train_and_evaluate(path,
                        model,
                        trainer,
                        evaluator,
-                       win_size=None,
-                       epochs=20):
+                       win_size,
+                       epochs,
+                       stride):
     """
     Read dataset from filename, train model and evaluate.
     trainer and evaluator should be instantiated by the caller.
@@ -52,8 +55,7 @@ def train_and_evaluate(path,
 
     trainer.train(model, data_train, epochs)
 
-    return evaluator.evaluate(data, labels, model, win_size)
-
+    return evaluator.evaluate(data, labels, model, win_size, stride)
 
 
 def main(seed):
@@ -71,58 +73,68 @@ def main(seed):
     file_list = pd.read_csv(file_list)['file_name'].values
 
     win_size = 96
-
-    latent_len = max(2, int(96 * 0.4))
-
-    hidden_dims = [
-        min(max(2, int(width)), max(2, win_size -1))
-        for width in [48, 24]
-    ]
+    epochs = 50
+    hidden_ratios = [0.5, 0.25]
     config = SimpleNamespace(
         task_name="anomaly_detection",
         seq_len=win_size,
         enc_in=1,
-        latent_len=latent_len,
-        hidden_dims=hidden_dims,
+        hidden_ratios=hidden_ratios,
         activation="relu",
     )
 
+    scheduled_lr_scheduler = "plateau"
+    scheduled_lr_scheduler_kwargs = {
+        "patience": 5,
+        "factor": 0.5,
+        "min_lr": 1e-5,
+    }
 
-
-    
     trainer = Trainer(
         batch_size=1024,
         lr=1e-2,
         device='cuda',
         win_size=win_size,
-        validation_size=0.2
+        validation_size=0.2,
+        lr_scheduler=scheduled_lr_scheduler,
+        lr_scheduler_kwargs=scheduled_lr_scheduler_kwargs
     )
     evaluator = Evaluator(
-        batch_size=1024,
+        batch_size=1000,
         device='cuda',
         metrics='restr',
         strategy='overlapping'
     )
+    strides = [1, 12, 24, 36, 48, 60, 72, 84, 96]
     results = []
     for filename in tqdm(file_list):
         model = AutoEncoder.Model(config)
-        metrics = train_and_evaluate(
-            path,
-            filename,
-            model,
-            trainer,
-            evaluator,
-            win_size=win_size,
-            epochs=50
-        )
-        result = {'filename': filename}
-        result.update(metrics)
-        results.append(result)
-        
-        results_df = pd.DataFrame(results)
-        # results_df.to_csv(f'results/AutoEncoder/eval_hp_{seed}.csv', index=False)
+
+        data_train, data, labels = _read_file(path, filename)
+        rank = utils.find_length_rank(data[:, 0].reshape(-1, 1), rank=1)
+
+        trainer.train(model, data_train, epochs)
+        for stride in strides:
+            start_time = time.time()
+            reconstruction_error = evaluator.reconstruction_error(
+                data, model, win_size, stride)
+            end_time = time.time()
+
+            metrics = evaluator.metrics_fnc(
+                reconstruction_error, labels, slidingWindow=rank)
+
+            result = {'filename': filename, 'stride': stride,
+                      'execution_time': end_time - start_time}
+            result.update(metrics)
+            results.append(result)
+
+    results_df = pd.DataFrame(results)
+    results_df.to_csv(
+        f'results/AutoEncoder/paper_run_stride_{seed}.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
+
+
 if __name__ == '__main__':
-    for seed in range(3, 4, 1):
+    for seed in range(3, 8, 1):
         main(seed)
