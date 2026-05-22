@@ -7,6 +7,6 @@ src/*.egg-info
 .vscode/
 .env
 .DS_Store
-*.png
+
 *.ipynb_checkpoints
 *.db
