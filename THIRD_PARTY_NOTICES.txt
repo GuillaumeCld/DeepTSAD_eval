@@ -1,0 +1,11 @@
+This repository includes third-party code:
+
+## TSB-AD (Apache 2.0)
+https://github.com/TheDatumOrg/TSB-AD
+Copyright (c) TheDatumOrg
+Licensed under Apache License 2.0
+
+## Time-Series-Library (MIT)
+https://github.com/thuml/Time-Series-Library
+Copyright (c) THUML
+Licensed under MIT License
