@@ -11,7 +11,8 @@ DeepTSAD_eval is a research codebase for evaluating and comparing time-series an
 - **Results/plots**: Stored in [results/](results/) and [Figures/](Figures/).
 
 
-![Model Comparison Heatmap](Figures/model_comparison_polar_heatmap.png)
+<p align="center"><img src="Figures/model_comparison_polar_heatmap.png" alt="Model Comparison Heatmap" width="300" /></p>
+
 Installation
 ------------
 
