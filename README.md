@@ -11,8 +11,7 @@ DeepTSAD_eval is a research codebase for evaluating and comparing time-series an
 - **Results/plots**: Stored in [results/](results/) and [Figures/](Figures/).
 
 
-
-
+![Model Comparison Heatmap](Figures/model_comparison_polar_heatmap.png)
 Installation
 ------------
 
@@ -78,7 +77,7 @@ Repository layout
     - [src/utils/](src/utils/) — utility functions from Time-Series-Library for data loading, processing, and other common tasks.
     - [src/layers/](src/layers/) — implementations of custom layers used in models from the Time-Series-Library.
     - [src/models/](src/models/) — implementations of models used in evaluations from the Time-Series-Library and custom model for the AutoEncoder.
-- **src/models/**: Implementations of models used in evaluations from the Time-Series-Library.
+
 
 
 
@@ -86,7 +85,7 @@ Repository layout
 Sources
 -------
 - **Data & evaluation scoring:** The datasets and evaluation code used for some experiments are from the TSB-AD project: https://github.com/TheDatumOrg/TSB-AD
-- **Model implementations:** Many model implementations and references come from the Time-Series-Library: https://github.com/thuml/Time-Series-Library
+- **Model implementations:** Many model implementations come from the Time-Series-Library: https://github.com/thuml/Time-Series-Library
 
 
 Cite this work
