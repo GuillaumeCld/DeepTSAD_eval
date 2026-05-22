@@ -29,7 +29,7 @@ DEFAULT_SEEDS = [3,4,5,6,7]
 DEFAULT_TUNING_RESULTS_DIR = "results"
 DEFAULT_OUTPUT_DIR = "results/evaluation_best"
 DEFAULT_DATASET_PATH = "Datasets/TSB-AD-U/"
-DEFAULT_FILE_LIST = "Datasets/File_List/TSB-AD-U-Eva.csv"
+DEFAULT_FILE_LIST = "Datasets/File_List/TSB-AD-U-Eva-Full.csv"
 DEFAULT_TUNING_MAX_EPOCHS = 50
 DEFAULT_BATCH_SIZE = 1024
 DEFAULT_EVAL_BATCH_SIZE = 10000
@@ -469,7 +469,12 @@ def run_evaluation(model_name, best_by_strategy, dataset_path, file_list, seeds,
         trials_csv = strategy_best["trials_csv"]
 
         config, resolved_params = build_model_config(model_name, best_params)
+
         training_epochs = resolve_training_epochs(user_attrs)
+        # print(best_params)
+        # print(f"Resolved training epochs: {training_epochs}")
+        # import sys
+        # sys.exit(0)
         use_scheduler = resolved_params["lr_mode"] == "scheduled"
         scheduler_name = DEFAULT_SCHEDULED_LR_SCHEDULER if use_scheduler else "none"
         scheduler_kwargs = (

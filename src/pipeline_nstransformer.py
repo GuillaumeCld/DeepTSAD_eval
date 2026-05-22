@@ -67,7 +67,7 @@ def main():
     random.seed(seed)
 
     path = 'Datasets/TSB-AD-U/'
-    file_list = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
+    file_list = 'Datasets/File_List/TSB-AD-U-Eva.csv'
     file_list = pd.read_csv(file_list)['file_name'].values
 
     win_size = 32

@@ -91,9 +91,10 @@ def main():
                 # ----- ANOMALY SCORE -----
                 errors = (sequences - reconstructed) ** 2
                 errors = errors.cpu().numpy()
-                score = inference.combined_pointwise_profile(errors, len(data), window_length)
+                # score = inference.combined_pointwise_profile(errors, len(data), window_length)
+                score = inference.disjoint_pointwise_profile(errors, len(data), window_length)
+
                 end_time = time.time()
-                # score = inference.disjoint_pointwise_profile(errors, len(data), window_length)
 
                 metrics = evaluator.metrics_fnc(
                     score,

@@ -91,11 +91,11 @@ def main(seed):
         results.append(result)
 
         results_df = pd.DataFrame(results)
-        results_df.to_csv(f'results/DLinear/eval_hp_disjoint_{seed}.csv', index=False)
+        # results_df.to_csv(f'results/DLinear/eval_hp_disjoint_{seed}.csv', index=False)
 
     print(results_df.mean(numeric_only=True).round(3)*100)
 
 
 if __name__ == '__main__':
-    for seed in [3, 4, 5, 6, 7]:
+    for seed in [4]:#, 4, 5, 6, 7]:
         main(seed)

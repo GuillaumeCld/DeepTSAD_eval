@@ -13,6 +13,7 @@ def read_file(path, filename):
     data = df.iloc[:, 0:-1].values.astype(float)
     label = df['Label'].astype(int).to_numpy()
 
+
     # normalize data globally
     data_mean = data.mean(axis=0)
     data_std = data.std(axis=0)
@@ -23,7 +24,7 @@ def read_file(path, filename):
 
     train_index = filename.split('.')[0].split('_')[-3]
     data_train = data[:int(train_index), :]
-    data_test = data#[int(train_index):, :]
+    data_test = data
 
     return data_train, data_test, label#[int(train_index):]
 
@@ -73,50 +74,6 @@ class ReconstructDataset(torch.utils.data.Dataset):
         return self.samples[index]
 
 
-# class ReconstructDataset(torch.utils.data.Dataset):
-#     def __init__(self, data, window_size, stride=1, normalize=True):
-#         """
-#         data   : np.ndarray shape (T,) or (T,1), float-like
-#         """
-#         super().__init__()
-#         data = np.asarray(data, dtype=np.float32)
-#         if data.ndim == 1:
-#             data = data[:, None]              # (T,1)
-#         elif data.shape[1] != 1:
-#             raise ValueError(
-#                 "Expected univariate data with shape (T,) or (T,1).")
-
-#         self.window_size = int(window_size)
-#         self.stride = int(stride)
-
-#         if normalize:
-#             mu = data.mean(axis=0, keepdims=True)
-#             sigma = data.std(axis=0, keepdims=True)
-#             sigma[sigma == 0.0] = 1e-8
-#             data = (data - mu) / sigma
-#         else:
-#             mu = 0.0
-#             sigma = 1.0
-#         self.data = data                      # (T,1) float32
-#         self.mu = mu
-#         self.sigma = sigma
-
-#         T = self.data.shape[0]
-#         self.sample_num = max(0, (T - self.window_size) // self.stride + 1)
-
-#         # prebuild tensors (fast indexing later)
-#         x = torch.from_numpy(self.data)       # (T,1) float32
-
-#         starts = torch.arange(self.sample_num) * self.stride
-#         self.X = torch.stack([x[s:s+self.window_size, :]
-#                              for s in starts], dim=0)   # (N,W,1)
-
-#     def __len__(self):
-#         return self.sample_num
-
-#     def __getitem__(self, idx):
-
-#         return self.X[idx]
 
 
 def find_length_rank(data, rank=1):

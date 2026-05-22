@@ -12,6 +12,13 @@ from tools import read_file, find_length_rank
 
 def main():
 
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--data_path', type=str, default='Datasets/TSB-AD-U/',
+                        help='Path to the dataset directory')
+    args = parser.parse_args()
+
+
     # fix seed for reproducibility
     seed = 1
     torch.manual_seed(seed)
@@ -20,8 +27,8 @@ def main():
     np.random.seed(seed)
     random.seed(seed)
 
-    path = 'Datasets/TSB-AD-U/'
-    file_list_path = 'Datasets/File_List/TSB-AD-U-Eva.csv'
+    path = args.data_path
+    file_list_path = 'Datasets/File_List/TSB-AD-U-Eva-Full.csv'
     file_list = pd.read_csv(file_list_path)['file_name'].values
 
     evaluator = Evaluator(metrics='restr')
@@ -85,8 +92,9 @@ def main():
             errors = (sequences - reconstructed) ** 2
             errors = errors.cpu().numpy()
             score = inference.combined_pointwise_profile(errors, len(data), window_length)
-            end_time = time.time()
             # score = inference.disjoint_pointwise_profile(errors, len(data), window_length)
+
+            end_time = time.time()
 
             metrics = evaluator.metrics_fnc(
                 score,
@@ -103,7 +111,7 @@ def main():
         all_results.append(results_df)
 
         combined_df = pd.concat(all_results, ignore_index=True)
-        combined_df.to_csv(f'results/PCA/seed{seed}_overlapping.csv', index=False)
+        combined_df.to_csv(f'results/evaluation_best/Rec-PCA/seed{seed}_overlapping.csv', index=False)
 
         print(combined_df.mean(numeric_only=True).round(4))
 

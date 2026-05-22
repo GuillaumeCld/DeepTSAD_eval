@@ -1,6 +1,5 @@
 from eval import Evaluator
 from training import Trainer
-import models
 import pandas as pd
 import os
 from types import SimpleNamespace
@@ -11,10 +10,7 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import random
-import stumpy
-import math
-from tools import read_file, find_length_rank
-from numba import cuda
+
 
 
 def main():
@@ -260,7 +256,7 @@ def main():
         lr_scheduler_kwargs=scheduled_lr_scheduler_kwargs
     )
     strategies = ['overlapping']
-    for seed in range(3, 8, 1):
+    for seed in range(3, 4, 1):
         torch.manual_seed(seed)
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
@@ -271,7 +267,7 @@ def main():
         counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0}
         evaluator = Evaluator(batch_size=1024, device='cuda',
                         strategy="overlapping")
-        for filename in tqdm(file_list):
+        for filename in tqdm(file_list[::20]):
 
             meta = filename.split('.')[0].split('_')
             split, start, end = int(meta[-3]), int(meta[-2]), int(meta[-1])
@@ -288,7 +284,7 @@ def main():
 
             model = AutoEncoder.Model(config)
 
-            trainer.train(model, train_data, 50)
+            trainer.train(model, train_data, 100)
 
 
             reconstruction = evaluator.reconstruction_error(

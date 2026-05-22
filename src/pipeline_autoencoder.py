@@ -100,7 +100,7 @@ def main(seed):
         lr_scheduler_kwargs=scheduled_lr_scheduler_kwargs
     )
     evaluator = Evaluator(
-        batch_size=1000,
+        batch_size=10000,
         device='cuda',
         metrics='restr',
         strategy='overlapping'
