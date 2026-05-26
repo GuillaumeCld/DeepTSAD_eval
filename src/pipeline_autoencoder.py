@@ -1,3 +1,8 @@
+"""
+Usage:
+    python pipeline_autoencoder.py --path Datasets/TSB-AD-U/
+"""
+
 from eval import Evaluator
 from training import Trainer
 import models
@@ -14,6 +19,7 @@ import numpy as np
 import torch
 import random
 import time
+import argparse
 
 
 def _read_file(path, filename):
@@ -58,7 +64,7 @@ def train_and_evaluate(path,
     return evaluator.evaluate(data, labels, model, win_size, stride)
 
 
-def main(seed):
+def main(seed, path):
 
     # fix seed for reproducibility
 
@@ -68,7 +74,6 @@ def main(seed):
     np.random.seed(seed)
     random.seed(seed)
 
-    path = 'Datasets/TSB-AD-U/'
     file_list = 'Datasets/File_List/TSB-AD-U-Eva.csv'
     file_list = pd.read_csv(file_list)['file_name'].values
 
@@ -136,5 +141,8 @@ def main(seed):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--path', default='Datasets/TSB-AD-U/')
+    args = parser.parse_args()
     for seed in range(3, 8, 1):
-        main(seed)
+        main(seed, args.path)
